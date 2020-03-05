@@ -97,8 +97,10 @@ class listDataset(Dataset):
             exposure = 1.5
 
             # Get background image path
-            random_bg_index = random.randint(0, len(self.bg_file_names) - 1)
-            bgpath = self.bg_file_names[random_bg_index]    
+            bgpath = None
+            if self.bg_file_names is not None:
+                random_bg_index = random.randint(0, len(self.bg_file_names) - 1)
+                bgpath = self.bg_file_names[random_bg_index]    
 
             # Get the data augmented image and their corresponding labels
             img, label = load_data_detection(imgpath, self.shape, jitter, hue, saturation, exposure, bgpath, self.num_keypoints, self.max_num_gt)
