@@ -26,7 +26,8 @@ def build_targets(pred_corners, target, num_keypoints, num_anchors, num_classes,
     nPixels  = nH*nW
     for b in range(nB):
         cur_pred_corners = pred_corners[b*nAnchors:(b+1)*nAnchors].t()
-        cur_confs = torch.zeros(nAnchors)
+        # XXX PPP Bug fix. Case where there are no annotations in the image.
+        cur_confs = torch.zeros(nA, nH, nW) # it was nAnchors.
         for t in range(50):
             if target[b][t*num_labels+1] == 0:
                 break
@@ -36,7 +37,7 @@ def build_targets(pred_corners, target, num_keypoints, num_anchors, num_classes,
                 g.append(target[b][t*num_labels+2*i+2])
 
             cur_gt_corners = torch.FloatTensor(g).repeat(nAnchors,1).t() # 16 x nAnchors
-            cur_confs  = torch.max(cur_confs, corner_confidences(cur_pred_corners, cur_gt_corners)).view_as(conf_mask[b]) # some irrelevant areas are filtered, in the same grid multiple anchor boxes might exceed the threshold
+            cur_confs  = torch.max(cur_confs.reshape(-1), corner_confidences(cur_pred_corners, cur_gt_corners)).view_as(conf_mask[b]) # some irrelevant areas are filtered, in the same grid multiple anchor boxes might exceed the threshold
         conf_mask[b][cur_confs>sil_thresh] = 0
 
 
