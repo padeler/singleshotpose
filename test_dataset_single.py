@@ -140,7 +140,7 @@ def run():
 
     # Parse data configuration file
     data_options = read_data_cfg(datacfg)
-    trainlist    = data_options['valid']
+    trainlist    = data_options['train']
     gpus         = data_options['gpus']  
     num_workers  = int(data_options['num_workers'])
     backupdir    = data_options['backup']
@@ -174,11 +174,14 @@ def run():
     print("LOSS OPTIONS: ", loss_options)
 
     # Specifiy the model and the loss
-    model       = Darknet(modelcfg)
-
-    # # Model settings
-    model.load_weights(initweightfile) 
-    model.print_network()
+    if False:
+        model       = Darknet(modelcfg)
+        model.load_weights(initweightfile) 
+        model.print_network()
+        model.cuda()
+        model.eval()
+    else:
+        model = None
     # model.seen        = 0
     # processed_batches = model.seen/batch_size
     init_width        = 416 # model.width
@@ -188,7 +191,7 @@ def run():
 
     # print("Size: ", init_width, init_height)
 
-    bg_file_names = get_all_files('../VOCdevkit/VOC2012/JPEGImages')
+    bg_file_names = None#get_all_files('../VOCdevkit/VOC2012/JPEGImages')
     # Specify the number of workers
     use_cuda = True
     kwargs = {'num_workers': num_workers, 'pin_memory': True} if use_cuda else {}
@@ -207,16 +210,14 @@ def run():
     dataloader = torch.utils.data.DataLoader(dataset.listDataset(trainlist, 
                                                                    shape=(init_width, init_height),
                                                             	   shuffle=False,
-                                                            	   transform=transforms.Compose([transforms.ToTensor(),]), 
-                                                            	   train=False,
+                                                            	   transform=transforms.Compose([transforms.ToTensor(),]),
+                                                            	   train=True,
                                                             	   seen=0,
                                                             	   batch_size=batch_size,
                                                             	   num_workers=num_workers, 
                                                                    bg_file_names=bg_file_names),
                                                 batch_size=batch_size, shuffle=False, **kwargs)
     
-    model.cuda()
-    model.eval()
     
     delay = {True: 0, False: 1}
     paused = True
@@ -233,17 +234,19 @@ def run():
         # print("TARGET [0, 0:1] \n", t[0, :1])
         # print("CLASSES ", t[0, :, 0])
 
+        if model is not None:
+            images_gpu = images.cuda()
 
-        images_gpu = images.cuda()
+            model_out = model(images_gpu).detach()
+            all_boxes = np.array(get_region_boxes(model_out, num_classes, num_keypoints)).reshape(batch_size, 1, -1)
 
-        model_out = model(images_gpu).detach()
-        all_boxes = np.array(get_region_boxes(model_out, num_classes, num_keypoints)).reshape(batch_size, 1, -1)
+            # print("Model OUT", all_boxes.shape)
 
-        # print("Model OUT", all_boxes.shape)
-
-        pred = np.zeros_like(all_boxes)
-        pred[:, 0, 0] = all_boxes[:, 0, -1]
-        pred[:, 0, 1:-2] = all_boxes[:, 0, :-3]
+            pred = np.zeros_like(all_boxes)
+            pred[:, 0, 0] = all_boxes[:, 0, -1]
+            pred[:, 0, 1:-2] = all_boxes[:, 0, :-3]
+        else:
+            pred = None
 
         viz = visualize_results(images, t, pred, img_size=416, show_3d=True)
 

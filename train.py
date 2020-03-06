@@ -306,7 +306,7 @@ if __name__ == "__main__":
     nbatches      = nsamples / batch_size
     steps         = [float(step)*nbatches for step in net_options['steps'].split(',')]
     scales        = [float(scale) for scale in net_options['scales'].split(',')]
-    bg_file_names = get_all_files('VOCdevkit/VOC2012/JPEGImages')
+    bg_file_names = None # get_all_files('VOCdevkit/VOC2012/JPEGImages')
 
     # Train parameters
     max_epochs    = int(net_options['max_epochs'])
@@ -324,15 +324,17 @@ if __name__ == "__main__":
 
     # Specify which gpus to use
     use_cuda      = True
-    seed          = int(time.time())
+    seed          = 1
     torch.manual_seed(seed)
     if use_cuda:
         os.environ['CUDA_VISIBLE_DEVICES'] = gpus
         torch.cuda.manual_seed(seed)
 
     # Specifiy the model and the loss
-    model       = Darknet(modelcfg)
-    region_loss = RegionLoss(num_keypoints=9, num_classes=1, anchors=[], num_anchors=1, pretrain_num_epochs=15)
+    model = Darknet(modelcfg)
+    assert(model.num_anchors==1)
+    assert(len(model.anchors)==0)
+    region_loss = RegionLoss(num_keypoints=9, num_classes=model.num_classes, anchors=model.anchors, num_anchors=model.num_anchors, pretrain_num_epochs=pretrain_num_epochs)
 
     # Model settings
     model.load_weights_until_last(initweightfile) 

@@ -132,7 +132,7 @@ class RegionLoss(nn.Module):
         nGT, nCorrect, coord_mask, conf_mask, cls_mask, txs, tys, tconf, tcls = \
                        build_targets(pred_corners, target.data, num_keypoints, nA, nC, nH, nW, self.noobject_scale, self.object_scale, self.thresh, self.seen)
         cls_mask   = (cls_mask == 1)
-        nProposals = int((conf > 0.25).sum().data[0])
+        nProposals = int((conf > 0.25).sum().item())
         for i in range(num_keypoints):
             txs[i] = Variable(txs[i].cuda())
             tys[i] = Variable(tys[i].cuda())
@@ -171,6 +171,6 @@ class RegionLoss(nn.Module):
             print('       create loss : %f' % (t4 - t3))
             print('             total : %f' % (t4 - t0))
 
-        print('%d: nGT %d, recall %d, proposals %d, loss: x %f, y %f, conf %f, total %f' % (self.seen, nGT, nCorrect, nProposals, loss_x.data[0], loss_y.data[0], loss_conf.data[0], loss.data[0]))
+        print('%d: nGT %d, recall %d, proposals %d, loss: x %f, y %f, conf %f, total %f' % (self.seen, nGT, nCorrect, nProposals, loss_x.item(), loss_y.item(), loss_conf.item(), loss.item()))
         
         return loss
