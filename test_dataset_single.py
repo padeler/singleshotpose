@@ -237,7 +237,7 @@ def run():
         images_gpu = images.cuda()
 
         model_out = model(images_gpu).detach()
-        all_boxes = np.array(get_region_boxes(model_out, num_classes, num_keypoints)).reshape(batch_size, 1, -1)
+        all_boxes = np.array(get_region_boxes(model_out, num_classes, num_keypoints, anchor_dim=num_anchors)).reshape(batch_size, 1, -1)
 
         # print("Model OUT", all_boxes.shape)
 

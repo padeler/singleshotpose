@@ -4,7 +4,10 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from utils_multi import *
+from utils_multi import corner_confidences, corner_confidence, bbox_iou, convert2cpu
+import sys
+import numpy as np
+
 
 def build_targets(pred_corners, target, num_keypoints, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh, seen):
     nB = target.size(0)
@@ -27,7 +30,8 @@ def build_targets(pred_corners, target, num_keypoints, anchors, num_anchors, num
     nPixels  = nH*nW
     for b in range(nB):
         cur_pred_corners = pred_corners[b*nAnchors:(b+1)*nAnchors].t()
-        cur_confs = torch.zeros(nAnchors)
+        # XXX PPP Bug fix. Case where there are no annotations in the image.
+        cur_confs = torch.zeros(nA, nH, nW) # it was nAnchors.
         for t in range(50):
             if target[b][t*num_labels+1] == 0:
                 break

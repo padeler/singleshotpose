@@ -165,6 +165,9 @@ def fill_truth_detection(labpath, w, h, flip, dx, dy, sx, sy, num_keypoints, max
     return label
 
 def change_background(img, mask, bg):
+    if bg is None:
+        return img
+        
     ow, oh = img.size
     bg = bg.resize((ow, oh)).convert('RGB')
     
@@ -310,7 +313,7 @@ def augment_objects(imgpath, objname, add_objs, shape, jitter, hue, saturation, 
     mask = Image.open(maskpath).convert('RGB')
     img,mask,flip,dx,dy,sx,sy = shifted_data_augmentation_with_mask(img, mask, shape, jitter, hue, saturation, exposure)
     label = fill_truth_detection(labpath, iw, ih, flip, dx, dy, 1./sx, 1./sy, num_keypoints, max_num_gt)
-    total_label = np.reshape(label, (-1, num_labels))  
+    total_label = np.reshape(label, (-1, num_labels))
 
     # Mask the background
     masked_img = mask_background(img, mask)
@@ -367,7 +370,10 @@ def augment_objects(imgpath, objname, add_objs, shape, jitter, hue, saturation, 
 def load_data_detection(imgpath, shape, jitter, hue, saturation, exposure, bgpath, num_keypoints, max_num_gt):
     
     # Read the background image
-    bg = Image.open(bgpath).convert('RGB')
+    if bgpath is not None:
+        bg = Image.open(bgpath).convert('RGB')
+    else:
+        bg = None
     
     # Understand which object it is and get the neighboring objects
     dirname = os.path.dirname(os.path.dirname(imgpath)) ## dir of dir of file
@@ -379,5 +385,5 @@ def load_data_detection(imgpath, shape, jitter, hue, saturation, exposure, bgpat
     total_masked_img, label, total_mask = augment_objects(imgpath, objname, add_objs, shape, jitter, hue, saturation, exposure, num_keypoints, max_num_gt)
     img = change_background(total_masked_img, total_mask, bg)
     lb = np.reshape(label, (-1, num_labels))
-    return img,label
+    return img, label
 

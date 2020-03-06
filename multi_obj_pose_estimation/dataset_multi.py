@@ -57,6 +57,10 @@ class listDataset(Dataset):
                width = (random.randint(0,9) + 10)*self.cell_size
                self.shape = (width, width)
 
+        # # XXX PPP Override random input resizing
+        # width = 13*self.cell_size
+        # self.shape = (width, width)
+
         if self.train:
             # Decide on how much data augmentation you are going to apply
             jitter = 0.1
@@ -65,9 +69,12 @@ class listDataset(Dataset):
             exposure = 1.5
 
             # Get background image path
-            random_bg_index = random.randint(0, len(self.bg_file_names) - 1)
-            bgpath = self.bg_file_names[random_bg_index]
-
+            if self.bg_file_names is not None:
+                random_bg_index = random.randint(0, len(self.bg_file_names) - 1)
+                bgpath = self.bg_file_names[random_bg_index]
+            else:
+                bgpath = None
+                
             img, label = load_data_detection(imgpath, self.shape, jitter, hue, saturation, exposure, bgpath, self.num_keypoints, self.max_num_gt)
             label = torch.from_numpy(label)
         else:
@@ -76,6 +83,7 @@ class listDataset(Dataset):
                 img = img.resize(self.shape)
             
             labpath = imgpath.replace('benchvise', self.objclass).replace('images', 'labels_occlusion').replace('JPEGImages', 'labels_occlusion').replace('.jpg', '.txt').replace('.png','.txt')
+            # print("LABEL PATH" , labpath)
             num_labels = 2*self.num_keypoints+3 # +2 for ground-truth of width/height , +1 for class label
             label = torch.zeros(self.max_num_gt*num_labels)
             if os.path.getsize(labpath):

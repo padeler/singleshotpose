@@ -427,8 +427,8 @@ def image2torch(img):
 
 def read_data_cfg(datacfg):
     options = dict()
-    options['gpus'] = '0,1,2,3'
-    options['num_workers'] = '10'
+    options['gpus'] = '0'
+    options['num_workers'] = '4'
     with open(datacfg, 'r') as fp:
         lines = fp.readlines()
 

@@ -89,11 +89,14 @@ class listDataset(Dataset):
                width = (random.randint(0,19) + 7)*self.cell_size
                self.shape = (width, width)
 
+        # XXX PPP no input size augmentation
+        self.shape = (13*self.cell_size, 13*self.cell_size)
+
         if self.train:
             # Decide on how much data augmentation you are going to apply
             jitter = 0.2
             hue = 0.1
-            saturation = 1.5 
+            saturation = 1.5
             exposure = 1.5
 
             # Get background image path

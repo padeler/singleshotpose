@@ -18,10 +18,12 @@ from torch.autograd import Variable # Useful info about autograd: http://pytorch
 
 from darknet_multi import Darknet
 from MeshPly import MeshPly
-from utils_multi import *    
+from utils_multi import read_data_cfg, file_lines, logging, convert2cpu
 from cfg import parse_cfg
 from region_loss_multi import RegionLoss
-import dataset_multi
+import dataset
+
+from utils import get_region_boxes, pnp, get_camera_intrinsic, get_3D_corners, calcAngularDistance, compute_projection, compute_transformation
 
 # Adjust learning rate during training, learning schedule can be changed in network config file
 def adjust_learning_rate(optimizer, batch):
@@ -46,7 +48,7 @@ def train(epoch):
     t0 = time.time()
 
     # Get the dataloader for training dataset
-    train_loader = torch.utils.data.DataLoader(dataset_multi.listDataset(trainlist, shape=(init_width, init_height),
+    train_loader = torch.utils.data.DataLoader(dataset.listDataset(trainlist, shape=(init_width, init_height),
                                                             shuffle=True,
                                                             transform=transforms.Compose([transforms.ToTensor(),]), 
                                                             train=True, 
@@ -57,7 +59,7 @@ def train(epoch):
 
     # TRAINING
     lr = adjust_learning_rate(optimizer, processed_batches)
-    logging('epoch %d, processed %d samples, lr %f' % (epoch, epoch * len(train_loader.dataset), lr))
+    logging('Epoch %d, (best %0.4f) iter %d processed %d samples, lr %f' % (epoch, best_acc, processed_batches, epoch * len(train_loader.dataset), lr))
     # Start training
     model.train()
     t1 = time.time()
@@ -120,37 +122,184 @@ def train(epoch):
     t1 = time.time()
     return epoch * math.ceil(len(train_loader.dataset) / float(batch_size) ) + niter - 1 
 
-def eval(niter, datacfg):
+# def eval(niter, datacfg):
+#     def truths_length(truths):
+#         for i in range(50):
+#             if truths[i][1] == 0:
+#                 return i
+            
+#     # Parse configuration files
+#     options       = read_data_cfg(datacfg)
+#     valid_images  = options['valid']
+#     meshname      = options['mesh']
+#     backupdir     = options['backup']
+#     name          = options['name']
+#     # Read object model information, get 3D bounding box corners
+#     mesh          = MeshPly(meshname)
+#     vertices      = np.c_[np.array(mesh.vertices), np.ones((len(mesh.vertices), 1))].transpose()
+#     corners3D     = get_3D_corners(vertices)
+#     # Read intrinsic camera parameters
+#     internal_calibration = get_camera_intrinsic(u0, v0, fx, fy)        
+    
+#     # Get validation file names
+#     with open(valid_images) as fp:
+#         tmp_files = fp.readlines()
+#         valid_files = [item.rstrip() for item in tmp_files]
+        
+#     # Specify model, load pretrained weights, pass to GPU and set the module in evaluation mode
+#     model.eval()
+    
+#     # Get the parser for the test dataset
+#     valid_dataset = dataset.listDataset(valid_images, shape=(model.module.width, model.module.height),
+#                        shuffle=False,
+#                        transform=transforms.Compose([
+#                            transforms.ToTensor(),
+#                        ]))
+#     valid_batchsize = 1
+
+#     # Specify the number of workers for multiple processing, get the dataloader for the test dataset
+#     kwargs = {'num_workers': 4, 'pin_memory': True}
+#     test_loader = torch.utils.data.DataLoader(
+#         valid_dataset, batch_size=valid_batchsize, shuffle=False, **kwargs) 
+
+#     # Parameters
+#     num_classes          = model.module.num_classes
+#     anchors              = model.module.anchors
+#     num_anchors          = model.module.num_anchors
+#     testing_error_pixel  = 0.0
+#     testing_samples      = 0.0
+#     errs_2d              = []
+
+#     logging("   Number of test samples: %d" % len(test_loader.dataset))
+#     # Iterate through test examples 
+#     for batch_idx, (data, target) in enumerate(test_loader):
+#         t1 = time.time()
+        
+#         # Pass the data to GPU
+#         if use_cuda:
+#             data = data.cuda()
+#             target = target.cuda()
+        
+#         # Wrap tensors in Variable class, set volatile=True for inference mode and to use minimal memory during inference
+#         data = Variable(data, volatile=True)
+#         t2 = time.time()
+        
+#         # Formward pass
+#         output = model(data).data  
+#         t3 = time.time()
+        
+#         # Using confidence threshold, eliminate low-confidence predictions
+#         trgt = target[0].view(-1, num_labels)
+
+#         all_boxes = get_multi_region_boxes(output, conf_thresh, num_classes, num_keypoints, anchors, num_anchors, int(trgt[0][0]), only_objectness=0)    
+#         t4 = time.time()
+
+#         # Iterate through all batch elements
+#         for i in range(output.size(0)):
+
+#             # For each image, get all the predictions
+#             boxes   = all_boxes[i]
+
+#             # For each image, get all the targets (for multiple object pose estimation, there might be more than 1 target per image)
+#             truths  = target[i].view(-1, num_labels)
+
+#             # Get how many objects are present in the scene
+#             num_gts = truths_length(truths)
+
+
+#             # Iterate through each ground-truth object
+#             for k in range(num_gts):
+#                 box_gt = list()
+#                 for j in range(1, num_labels):
+#                     box_gt.append(truths[k][j])
+#                 box_gt.extend([1.0, 1.0])
+#                 box_gt.append(truths[k][0])
+                
+#                 # If the prediction has the highest confidence, choose it as our prediction
+#                 best_conf_est = -sys.maxsize
+#                 for j in range(len(boxes)):
+#                     if (boxes[j][2*num_keypoints] > best_conf_est) and (boxes[j][2*num_keypoints+2] == int(truths[k][0])):
+#                         best_conf_est = boxes[j][2*num_keypoints]
+#                         box_pr        = boxes[j]
+#                         match         = corner_confidence(box_gt[:2*num_keypoints], torch.FloatTensor(boxes[j][:2*num_keypoints]))
+
+#                 # Denormalize the corner predictions 
+#                 corners2D_gt = np.array(np.reshape(box_gt[:2*num_keypoints], [num_keypoints, 2]), dtype='float32')
+#                 corners2D_pr = np.array(np.reshape(box_pr[:2*num_keypoints], [num_keypoints, 2]), dtype='float32')
+#                 corners2D_gt[:, 0] = corners2D_gt[:, 0] * im_width
+#                 corners2D_gt[:, 1] = corners2D_gt[:, 1] * im_height               
+#                 corners2D_pr[:, 0] = corners2D_pr[:, 0] * im_width
+#                 corners2D_pr[:, 1] = corners2D_pr[:, 1] * im_height
+#                 corners2D_gt_corrected = fix_corner_order(corners2D_gt) # Fix the order of the corners in OCCLUSION
+
+#                 # Compute [R|t] by pnp
+#                 objpoints3D = np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32')
+#                 K = np.array(internal_calibration, dtype='float32')
+#                 R_gt, t_gt = pnp(objpoints3D,  corners2D_gt_corrected, K)
+#                 R_pr, t_pr = pnp(objpoints3D,  corners2D_pr, K)
+                
+#                 # Compute pixel error
+#                 Rt_gt           = np.concatenate((R_gt, t_gt), axis=1)
+#                 Rt_pr           = np.concatenate((R_pr, t_pr), axis=1)
+#                 proj_2d_gt      = compute_projection(vertices, Rt_gt, internal_calibration) 
+#                 proj_2d_pred    = compute_projection(vertices, Rt_pr, internal_calibration) 
+#                 proj_corners_gt = np.transpose(compute_projection(corners3D, Rt_gt, internal_calibration)) 
+#                 proj_corners_pr = np.transpose(compute_projection(corners3D, Rt_pr, internal_calibration)) 
+#                 norm            = np.linalg.norm(proj_2d_gt - proj_2d_pred, axis=0)
+#                 pixel_dist      = np.mean(norm)
+#                 errs_2d.append(pixel_dist)
+
+#                 # Sum errors
+#                 testing_error_pixel += pixel_dist
+#                 testing_samples     += 1
+
+#         t5 = time.time()
+
+#     # Compute 2D reprojection score
+#     eps = 1e-5
+#     for px_threshold in [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
+#         acc = len(np.where(np.array(errs_2d) <= px_threshold)[0]) * 100. / (len(errs_2d)+eps)
+#         logging('   Acc using {} px 2D Projection = {:.2f}%'.format(px_threshold, acc))
+
+#     if True:
+#         logging('-----------------------------------')
+#         logging('  tensor to cuda : %f' % (t2 - t1))
+#         logging('         predict : %f' % (t3 - t2))
+#         logging('get_region_boxes : %f' % (t4 - t3))
+#         logging('            eval : %f' % (t5 - t4))
+#         logging('           total : %f' % (t5 - t1))
+#         logging('-----------------------------------')
+
+#     # Register losses and errors for saving later on
+#     testing_iters.append(niter)
+#     testing_errors_pixel.append(testing_error_pixel/(float(testing_samples)+eps))
+#     testing_accuracies.append(acc)
+
+
+def test(epoch, niter, datacfg):
     def truths_length(truths):
         for i in range(50):
             if truths[i][1] == 0:
                 return i
-            
-    # Parse configuration files
+
+    # Set the module in evaluation mode (turn off dropout, batch normalization etc.)        
+    model.eval()
+
     options       = read_data_cfg(datacfg)
     valid_images  = options['valid']
     meshname      = options['mesh']
     backupdir     = options['backup']
     name          = options['name']
-    # Read object model information, get 3D bounding box corners
-    mesh          = MeshPly(meshname)
-    vertices      = np.c_[np.array(mesh.vertices), np.ones((len(mesh.vertices), 1))].transpose()
-    corners3D     = get_3D_corners(vertices)
-    # Read intrinsic camera parameters
-    internal_calibration = get_camera_intrinsic(u0, v0, fx, fy)        
-    
-    # Get validation file names
-    with open(valid_images) as fp:
-        tmp_files = fp.readlines()
-        valid_files = [item.rstrip() for item in tmp_files]
-        
-    # Specify model, load pretrained weights, pass to GPU and set the module in evaluation mode
-    model.eval()
-    
-    # Get the parser for the test dataset
-    valid_dataset = dataset_multi.listDataset(valid_images, shape=(model.module.width, model.module.height),
+
+    mesh                 = MeshPly(meshname)
+    vertices             = np.c_[np.array(mesh.vertices), np.ones((len(mesh.vertices), 1))].transpose()
+    corners3D            = get_3D_corners(vertices)
+    internal_calibration = get_camera_intrinsic(u0, v0, fx, fy)
+
+
+        # Get the parser for the test dataset
+    valid_dataset = dataset.listDataset(valid_images, shape=(model.module.width, model.module.height),
                        shuffle=False,
-                       objclass=name,
                        transform=transforms.Compose([
                            transforms.ToTensor(),
                        ]))
@@ -161,140 +310,141 @@ def eval(niter, datacfg):
     test_loader = torch.utils.data.DataLoader(
         valid_dataset, batch_size=valid_batchsize, shuffle=False, **kwargs) 
 
+
     # Parameters
     num_classes          = model.module.num_classes
     anchors              = model.module.anchors
     num_anchors          = model.module.num_anchors
+    testtime             = True
+    testing_error_trans  = 0.0
+    testing_error_angle  = 0.0
     testing_error_pixel  = 0.0
     testing_samples      = 0.0
     errs_2d              = []
-
+    errs_3d              = []
+    errs_trans           = []
+    errs_angle           = []
+    errs_corner2D        = []
+    logging("   Testing...")
     logging("   Number of test samples: %d" % len(test_loader.dataset))
+    notpredicted = 0
     # Iterate through test examples 
     for batch_idx, (data, target) in enumerate(test_loader):
+        if batch_idx==100:
+            break
         t1 = time.time()
-        
         # Pass the data to GPU
         if use_cuda:
             data = data.cuda()
             target = target.cuda()
-        
         # Wrap tensors in Variable class, set volatile=True for inference mode and to use minimal memory during inference
         data = Variable(data, volatile=True)
         t2 = time.time()
-        
         # Formward pass
         output = model(data).data  
         t3 = time.time()
-        
         # Using confidence threshold, eliminate low-confidence predictions
-        trgt = target[0].view(-1, num_labels)
-
-        all_boxes = get_multi_region_boxes(output, conf_thresh, num_classes, num_keypoints, anchors, num_anchors, int(trgt[0][0]), only_objectness=0)    
+        all_boxes = get_region_boxes(output, num_classes, num_keypoints, anchor_dim=num_anchors)
         t4 = time.time()
-
         # Iterate through all batch elements
-        for i in range(output.size(0)):
-
-            # For each image, get all the predictions
-            boxes   = all_boxes[i]
-
+        for box_pr, target in zip([all_boxes], [target[0]]):
             # For each image, get all the targets (for multiple object pose estimation, there might be more than 1 target per image)
-            truths  = target[i].view(-1, num_labels)
-
+            truths = target.view(-1, num_keypoints*2+3)
             # Get how many objects are present in the scene
-            num_gts = truths_length(truths)
-
-
+            num_gts    = truths_length(truths)
             # Iterate through each ground-truth object
             for k in range(num_gts):
                 box_gt = list()
-                for j in range(1, num_labels):
+                for j in range(1, 2*num_keypoints+1):
                     box_gt.append(truths[k][j])
                 box_gt.extend([1.0, 1.0])
                 box_gt.append(truths[k][0])
-                
-                # If the prediction has the highest confidence, choose it as our prediction
-                best_conf_est = -sys.maxsize
-                for j in range(len(boxes)):
-                    if (boxes[j][2*num_keypoints] > best_conf_est) and (boxes[j][2*num_keypoints+2] == int(truths[k][0])):
-                        best_conf_est = boxes[j][2*num_keypoints]
-                        box_pr        = boxes[j]
-                        match         = corner_confidence(box_gt[:2*num_keypoints], torch.FloatTensor(boxes[j][:2*num_keypoints]))
-
+                   
                 # Denormalize the corner predictions 
-                corners2D_gt = np.array(np.reshape(box_gt[:2*num_keypoints], [num_keypoints, 2]), dtype='float32')
-                corners2D_pr = np.array(np.reshape(box_pr[:2*num_keypoints], [num_keypoints, 2]), dtype='float32')
+                corners2D_gt = np.array(np.reshape(box_gt[:num_keypoints*2], [num_keypoints, 2]), dtype='float32')
+                corners2D_pr = np.array(np.reshape(box_pr[:num_keypoints*2], [num_keypoints, 2]), dtype='float32')
                 corners2D_gt[:, 0] = corners2D_gt[:, 0] * im_width
                 corners2D_gt[:, 1] = corners2D_gt[:, 1] * im_height               
                 corners2D_pr[:, 0] = corners2D_pr[:, 0] * im_width
                 corners2D_pr[:, 1] = corners2D_pr[:, 1] * im_height
-                corners2D_gt_corrected = fix_corner_order(corners2D_gt) # Fix the order of the corners in OCCLUSION
+
+                # Compute corner prediction error
+                corner_norm = np.linalg.norm(corners2D_gt - corners2D_pr, axis=1)
+                corner_dist = np.mean(corner_norm)
+                errs_corner2D.append(corner_dist)
 
                 # Compute [R|t] by pnp
-                objpoints3D = np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32')
-                K = np.array(internal_calibration, dtype='float32')
-                R_gt, t_gt = pnp(objpoints3D,  corners2D_gt_corrected, K)
-                R_pr, t_pr = pnp(objpoints3D,  corners2D_pr, K)
-                
+                R_gt, t_gt = pnp(np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32'),  corners2D_gt, np.array(internal_calibration, dtype='float32'))
+                R_pr, t_pr = pnp(np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32'),  corners2D_pr, np.array(internal_calibration, dtype='float32'))
+
+                # Compute errors
+                # Compute translation error
+                trans_dist   = np.sqrt(np.sum(np.square(t_gt - t_pr)))
+                errs_trans.append(trans_dist)
+
+                # Compute angle error
+                angle_dist   = calcAngularDistance(R_gt, R_pr)
+                errs_angle.append(angle_dist)
+
                 # Compute pixel error
-                Rt_gt           = np.concatenate((R_gt, t_gt), axis=1)
-                Rt_pr           = np.concatenate((R_pr, t_pr), axis=1)
-                proj_2d_gt      = compute_projection(vertices, Rt_gt, internal_calibration) 
-                proj_2d_pred    = compute_projection(vertices, Rt_pr, internal_calibration) 
-                proj_corners_gt = np.transpose(compute_projection(corners3D, Rt_gt, internal_calibration)) 
-                proj_corners_pr = np.transpose(compute_projection(corners3D, Rt_pr, internal_calibration)) 
-                norm            = np.linalg.norm(proj_2d_gt - proj_2d_pred, axis=0)
-                pixel_dist      = np.mean(norm)
+                Rt_gt        = np.concatenate((R_gt, t_gt), axis=1)
+                Rt_pr        = np.concatenate((R_pr, t_pr), axis=1)
+                proj_2d_gt   = compute_projection(vertices, Rt_gt, internal_calibration) 
+                proj_2d_pred = compute_projection(vertices, Rt_pr, internal_calibration) 
+                norm         = np.linalg.norm(proj_2d_gt - proj_2d_pred, axis=0)
+                pixel_dist   = np.mean(norm)
                 errs_2d.append(pixel_dist)
 
+                # Compute 3D distances
+                transform_3d_gt   = compute_transformation(vertices, Rt_gt) 
+                transform_3d_pred = compute_transformation(vertices, Rt_pr)  
+                norm3d            = np.linalg.norm(transform_3d_gt - transform_3d_pred, axis=0)
+                vertex_dist       = np.mean(norm3d)    
+                errs_3d.append(vertex_dist)  
+
                 # Sum errors
-                testing_error_pixel += pixel_dist
-                testing_samples     += 1
+                testing_error_trans  += trans_dist
+                testing_error_angle  += angle_dist
+                testing_error_pixel  += pixel_dist
+                testing_samples      += 1
 
         t5 = time.time()
 
-    # Compute 2D reprojection score
-    eps = 1e-5
-    for px_threshold in [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]:
-        acc = len(np.where(np.array(errs_2d) <= px_threshold)[0]) * 100. / (len(errs_2d)+eps)
-        logging('   Acc using {} px 2D Projection = {:.2f}%'.format(px_threshold, acc))
+    # Compute 2D projection, 6D pose and 5cm5degree scores
+    px_threshold = 5 # 5 pixel threshold for 2D reprojection error is standard in recent sota 6D object pose estimation works 
+    eps          = 1e-5
+    acc          = len(np.where(np.array(errs_2d) <= px_threshold)[0]) * 100. / (len(errs_2d)+eps)
+    acc3d        = len(np.where(np.array(errs_3d) <= vx_threshold)[0]) * 100. / (len(errs_3d)+eps)
+    acc5cm5deg   = len(np.where((np.array(errs_trans) <= 0.05) & (np.array(errs_angle) <= 5))[0]) * 100. / (len(errs_trans)+eps)
+    corner_acc   = len(np.where(np.array(errs_corner2D) <= px_threshold)[0]) * 100. / (len(errs_corner2D)+eps)
+    mean_err_2d  = np.mean(errs_2d)
+    mean_corner_err_2d = np.mean(errs_corner2D)
+    nts = float(testing_samples)
+    
+    if testtime:
+        print('-----------------------------------')
+        print('  tensor to cuda : %f' % (t2 - t1))
+        print('         predict : %f' % (t3 - t2))
+        print('get_region_boxes : %f' % (t4 - t3))
+        print('            eval : %f' % (t5 - t4))
+        print('           total : %f' % (t5 - t1))
+        print('-----------------------------------')
 
-    if True:
-        logging('-----------------------------------')
-        logging('  tensor to cuda : %f' % (t2 - t1))
-        logging('         predict : %f' % (t3 - t2))
-        logging('get_region_boxes : %f' % (t4 - t3))
-        logging('            eval : %f' % (t5 - t4))
-        logging('           total : %f' % (t5 - t1))
-        logging('-----------------------------------')
+    # Print test statistics
+    logging("   Mean corner error is %f" % (mean_corner_err_2d))
+    logging("   Mean 2D error is %f" % (mean_err_2d))
+    logging('   Acc using {} px 2D Projection = {:.2f}%'.format(px_threshold, acc))
+    logging('   Acc using {} vx 3D Transformation = {:.2f}%'.format(vx_threshold, acc3d))
+    logging('   Acc using 5 cm 5 degree metric = {:.2f}%'.format(acc5cm5deg))
+    logging('   Translation error: %f, angle error: %f' % (testing_error_trans/(nts+eps), testing_error_angle/(nts+eps)) )
 
     # Register losses and errors for saving later on
     testing_iters.append(niter)
-    testing_errors_pixel.append(testing_error_pixel/(float(testing_samples)+eps))
+    testing_errors_trans.append(testing_error_trans/(nts+eps))
+    testing_errors_angle.append(testing_error_angle/(nts+eps))
+    testing_errors_pixel.append(testing_error_pixel/(nts+eps))
     testing_accuracies.append(acc)
 
-def test(niter):
-    
-    modelcfg = 'cfg/yolo-pose-multi.cfg'
-    datacfg = 'cfg/ape_occlusion.data'
-    logging("Testing ape...")
-    eval(niter, datacfg)
-    datacfg = 'cfg/can_occlusion.data'
-    logging("Testing can...")
-    eval(niter, datacfg)
-    datacfg = 'cfg/cat_occlusion.data'
-    logging("Testing cat...")
-    eval(niter, datacfg)
-    datacfg = 'cfg/duck_occlusion.data'
-    logging("Testing duck...")
-    eval(niter, datacfg)
-    datacfg = 'cfg/driller_occlusion.data'
-    logging("Testing driller...")
-    eval(niter, datacfg)
-    datacfg = 'cfg/glue_occlusion.data'
-    logging("Testing glue...")
-    eval(niter, datacfg)
 
 if __name__ == "__main__":
 
@@ -316,12 +466,13 @@ if __name__ == "__main__":
     gpus         = data_options['gpus']  
     num_workers  = int(data_options['num_workers'])
     backupdir    = data_options['backup']
-    im_width     = int(data_options['im_width'])
-    im_height    = int(data_options['im_height']) 
+    im_width     = int(data_options['width'])
+    im_height    = int(data_options['height']) 
     fx           = float(data_options['fx'])
     fy           = float(data_options['fy'])
     u0           = float(data_options['u0'])
     v0           = float(data_options['v0'])
+    vx_threshold  = float(data_options['diam']) * 0.1 # threshold for the ADD metric
 
     # Parse network and training configuration parameters
     net_options   = parse_cfg(modelcfg)[0]
@@ -338,16 +489,22 @@ if __name__ == "__main__":
     num_anchors   = int(loss_options['num'])
     steps         = [float(step) for step in net_options['steps'].split(',')]
     scales        = [float(scale) for scale in net_options['scales'].split(',')]
-    anchors       = [float(anchor) for anchor in loss_options['anchors'].split(',')]
+
+
+    anchors = loss_options['anchors'].split(',')
+    if anchors == ['']:
+        anchors = []
+    else:
+        anchors = [float(i) for i in anchors]
 
     # Further params
     if not os.path.exists(backupdir):
         makedirs(backupdir)
-    bg_file_names = get_all_files('../VOCdevkit/VOC2012/JPEGImages')
+    bg_file_names = None # get_all_files('../VOCdevkit/VOC2012/JPEGImages')
     nsamples      = file_lines(trainlist)
     use_cuda      = True
     seed          = int(time.time())
-    best_acc      = -sys.maxsize
+    best_acc      = 0
     num_labels    = num_keypoints*2+3 # + 2 for image width, height, +1 for image class
 
     # Specify which gpus to use
@@ -377,6 +534,9 @@ if __name__ == "__main__":
     testing_iters        = []
     testing_errors_pixel = []
     testing_accuracies   = []
+    testing_errors_trans = []
+    testing_errors_angle = []
+
 
     # Specify the number of workers
     kwargs = {'num_workers': num_workers, 'pin_memory': True} if use_cuda else {}
@@ -396,27 +556,24 @@ if __name__ == "__main__":
             params += [{'params': [value], 'weight_decay': decay*batch_size}]
     optimizer = optim.SGD(model.parameters(), lr=learning_rate/batch_size, momentum=momentum, dampening=0, weight_decay=decay*batch_size)
 
-    evaluate = False
-    if evaluate:
-        logging('evaluating ...')
-        test(0, 0)
-    else:
-        for epoch in range(init_epoch, max_epochs): 
-            # TRAIN
-            niter = train(epoch)
-            # TEST and SAVE
-            if (epoch % 20 == 0) and (epoch is not 0): 
-                test(niter)
-                logging('save training stats to %s/costs.npz' % (backupdir))
-                np.savez(os.path.join(backupdir, "costs.npz"),
+    print("Training [%d, %d]"%(init_epoch, max_epochs))
+    for epoch in range(init_epoch, max_epochs): 
+        # TRAIN
+        niter = train(epoch)
+        # TEST and SAVE
+        if (epoch % 20 == 0) and (epoch is not 0): 
+            test(epoch, niter, datacfg)
+            score = np.mean(testing_accuracies[-1:])
+            logging('Test score %0.4f. Save training stats to %s/costs.npz' % (score, backupdir))
+            if (score > best_acc ): # testing for 6 different objects
+                best_acc = score
+                np.savez(os.path.join(backupdir, "best_costs.npz"),
                     training_iters=training_iters,
                     training_losses=training_losses,
                     testing_iters=testing_iters,
                     testing_accuracies=testing_accuracies,
                     testing_errors_pixel=testing_errors_pixel) 
-                if (np.mean(testing_accuracies[-6:]) > best_acc ): # testing for 6 different objects
-                    best_acc = np.mean(testing_accuracies[-6:]) 
-                    logging('best model so far!')
-                    logging('save weights to %s/model.weights' % (backupdir))
-                    model.module.save_weights('%s/model.weights' % (backupdir))
+                logging('Epoch %d ==> best model so far %f'% (epoch, best_acc))
+                logging('save weights to %s/best_model.weights' % (backupdir))
+                model.module.save_weights('%s/best_model.weights' % (backupdir))
         # shutil.copy2('%s/model.weights' % (backupdir), '%s/model_backup.weights' % (backupdir))

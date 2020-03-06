@@ -213,10 +213,9 @@ def convert2cpu(gpu_matrix):
 def convert2cpu_long(gpu_matrix):
     return torch.LongTensor(gpu_matrix.size()).copy_(gpu_matrix)
 
-def get_region_boxes(output, num_classes, num_keypoints, only_objectness=1, validation=True):
+def get_region_boxes(output, num_classes, num_keypoints, only_objectness=1, validation=True, anchor_dim=1):
     
     # Parameters
-    anchor_dim = 1 
     if output.dim() == 3:
         output = output.unsqueeze(0)
     batch = output.size(0)
