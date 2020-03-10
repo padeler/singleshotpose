@@ -10,44 +10,56 @@ import torch
 
 from torch.utils.data import Dataset
 from utils import read_truths_args, read_truths, get_all_files
+import glob
+from utils import read_data_cfg
+
+
+def merge_experiment_dirs(all_data_files, key="train"):
+    res = []
+    for datafile in all_data_files:
+        data_options = read_data_cfg(datafile)
+
+        with open(data_options[key], 'r') as file:
+            trainlist = file.readlines()
+            res.extend(trainlist)
+
+    return res
+
 
 class listDataset(Dataset):
 
-    def __init__(self, files_list, shape=None, shuffle=True, transform=None, target_transform=None, train=False, seen=0, batch_size=64, num_workers=4, cell_size=32, bg_file_names=None, num_keypoints=9, max_num_gt=50):
+    def __init__(self, experiment, image_set="train", shape=None, shuffle=True, transform=None, target_transform=None, train=False, seen=0, batch_size=64, num_workers=4, cell_size=32, bg_file_names=None, num_keypoints=9, max_num_gt=50):
 
-      # shape            : shape of the image input to the network
-      # shuffle          : whether to shuffle or not 
-      # tranform         : any pytorch-specific transformation to the input image 
-      # target_transform : any pytorch-specific tranformation to the target output
-      # train            : whether it is training data or test data
-      # seen             : the number of visited examples (iteration of the batch x batch size) # TODO: check if this is correctly assigned
-      # batch_size       : how many examples there are in the batch
-      # num_workers      : check what this is
-      # bg_file_names    : the filenames for images from which you assign random backgrounds
+        if os.path.isdir(experiment): # parse experiment dir
+            all_data_files = glob.glob(experiment+os.sep+"**/*.data")
+        else:
+            all_data_files = [experiment,]
 
-       # read the the list of dataset images
-       assert(type(files_list) == list and len(files_list) > 0)
-       
-       self.lines = files_list
-       # Shuffle
-       if shuffle:
-           random.shuffle(self.lines)
 
-       # Initialize variables
-       self.nSamples         = len(self.lines)
-       self.transform        = transform
-       self.target_transform = target_transform
-       self.train            = train
-       self.shape            = shape
-       self.seen             = seen
-       self.batch_size       = batch_size
-       self.num_workers      = num_workers
-       self.bg_file_names    = bg_file_names
-       self.cell_size        = cell_size
-       self.nbatches         = self.nSamples // self.batch_size
-       self.num_keypoints    = num_keypoints
-       self.max_num_gt       = max_num_gt # maximum number of ground-truth labels an image can have
-    
+        # each data file corresponds to one object
+        self.num_classes = len(all_data_files)
+        files_list = merge_experiment_dirs(all_data_files, image_set)
+
+        self.lines = files_list
+        # Shuffle
+        if shuffle:
+            random.shuffle(self.lines)
+
+        # Initialize variables
+        self.nSamples = len(self.lines)
+        self.transform = transform
+        self.target_transform = target_transform
+        self.train = train
+        self.shape = shape
+        self.seen = seen
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.bg_file_names = bg_file_names
+        self.cell_size = cell_size
+        self.nbatches = self.nSamples // self.batch_size
+        self.num_keypoints = num_keypoints
+        self.max_num_gt = max_num_gt  # maximum number of ground-truth labels an image can have
+
     # Get the number of samples in the dataset
     def __len__(self):
         return self.nSamples
@@ -84,39 +96,38 @@ class listDataset(Dataset):
         #     elif self.seen < 70*self.nbatches*self.batch_size:
         #        width = (random.randint(0,17) + 8)*self.cell_size
         #        self.shape = (width, width)
-        #     else: 
+        #     else:
         #        width = (random.randint(0,19) + 7)*self.cell_size
         #        self.shape = (width, width)
-
 
         if self.train:
             # Decide on how much data augmentation you are going to apply
             jitter = 0.2
             hue = 0.1
-            saturation = 1.5 
+            saturation = 1.5
             exposure = 1.5
 
             # Get background image path
             bgpath = None
             if self.bg_file_names is not None:
                 random_bg_index = random.randint(0, len(self.bg_file_names) - 1)
-                bgpath = self.bg_file_names[random_bg_index]    
+                bgpath = self.bg_file_names[random_bg_index]
 
             # Get the data augmented image and their corresponding labels
             img, label = load_data_detection(imgpath, self.shape, jitter, hue, saturation, exposure, bgpath, self.num_keypoints, self.max_num_gt)
 
             # Convert the labels to PyTorch variables
             label = torch.from_numpy(label)
-        
+
         else:
             # Get the validation image, resize it to the network input size
             img = Image.open(imgpath).convert('RGB')
             if self.shape:
                 img = img.resize(self.shape)
-    
+
             # Read the validation labels, allow upto 50 ground-truth objects in an image
-            labpath = imgpath.replace('images', 'labels').replace('JPEGImages', 'labels').replace('.jpg', '.txt').replace('.png','.txt')
-            num_labels = 2*self.num_keypoints+3 # +2 for ground-truth of width/height , +1 for class label
+            labpath = imgpath.replace('images', 'labels').replace('JPEGImages', 'labels').replace('.jpg', '.txt').replace('.png', '.txt')
+            num_labels = 2*self.num_keypoints+3  # +2 for ground-truth of width/height , +1 for class label
             label = torch.zeros(self.max_num_gt*num_labels)
             if os.path.getsize(labpath):
                 ow, oh = img.size

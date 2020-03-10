@@ -135,6 +135,41 @@ def compute_2d_bb_from_orig_pix(pts, size):
     new_box = [cx*size, cy*size, w*size, h*size]
     return new_box
 
+# Compute IoU between two bounding boxes
+def bbox_iou(box1, box2, x1y1x2y2=False):
+    if x1y1x2y2:
+        mx = min(box1[0], box2[0])
+        Mx = max(box1[2], box2[2])
+        my = min(box1[1], box2[1])
+        My = max(box1[3], box2[3])
+        w1 = box1[2] - box1[0]
+        h1 = box1[3] - box1[1]
+        w2 = box2[2] - box2[0]
+        h2 = box2[3] - box2[1]
+    else:
+        mx = min(box1[0]-box1[2]/2.0, box2[0]-box2[2]/2.0)
+        Mx = max(box1[0]+box1[2]/2.0, box2[0]+box2[2]/2.0)
+        my = min(box1[1]-box1[3]/2.0, box2[1]-box2[3]/2.0)
+        My = max(box1[1]+box1[3]/2.0, box2[1]+box2[3]/2.0)
+        w1 = box1[2]
+        h1 = box1[3]
+        w2 = box2[2]
+        h2 = box2[3]
+    uw = Mx - mx
+    uh = My - my
+    cw = w1 + w2 - uw
+    ch = h1 + h2 - uh
+    carea = 0
+    if cw <= 0 or ch <= 0:
+        return 0.0
+
+    area1 = w1 * h1
+    area2 = w2 * h2
+    carea = cw * ch
+    uarea = area1 + area2 - carea
+    return carea/uarea
+
+
 def corner_confidences(gt_corners, pr_corners, th=80, sharpness=2, im_width=640, im_height=480):
     ''' gt_corners: Ground-truth 2D projections of the 3D bounding box corners, shape: (16 x nA), type: torch.FloatTensor
         pr_corners: Prediction for the 2D projections of the 3D bounding box corners, shape: (16 x nA), type: torch.FloatTensor

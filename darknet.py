@@ -57,9 +57,9 @@ class EmptyModule(nn.Module):
 
 # support route shortcut and reorg
 class Darknet(nn.Module):
-    def __init__(self, cfgfile):
+    def __init__(self, model_cfg):
         super(Darknet, self).__init__()
-        self.blocks = parse_cfg(cfgfile)
+        self.blocks = model_cfg
         self.models = self.create_network(self.blocks) # merge conv, bn,leaky
         self.loss = self.models[len(self.models)-1]
 

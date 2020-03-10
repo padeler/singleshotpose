@@ -24,6 +24,8 @@ from utils import get_all_files, get_region_boxes
 import matplotlib.pyplot as plt
 import matplotlib
 
+from train_tools import parse_args
+
 def get_cmap(labelCount, cmapName='jet', addbg=True):
     cmapGen = matplotlib.cm.get_cmap(cmapName, labelCount)
     cmap = cmapGen(np.arange(labelCount))
@@ -123,39 +125,17 @@ def visualize_results(images, gt=None, pred=None, count=5, img_size=256, hstack=
 def run():
 
     logger = logging.getLogger()
-    
-        # Parse command window input
-    parser = argparse.ArgumentParser(description='SingleShotPose')
-    parser.add_argument('--datacfg', type=str, default='cfg/ape.data') # data config
-    parser.add_argument('--modelcfg', type=str, default='cfg/yolo-pose.cfg') # network config
-    parser.add_argument('--initweightfile', type=str, default='backup/init.weights') # initialization weights
-    parser.add_argument('--pretrain_num_epochs', type=int, default=0) # how many epoch to pretrain
-    args                = parser.parse_args()
-    datacfg             = args.datacfg
-    modelcfg            = args.modelcfg
-    initweightfile      = args.initweightfile
-    pretrain_num_epochs = args.pretrain_num_epochs
+    args = parse_args()
 
+    modelcfg            = args.modelcfg
+    initweightfile      = args.weightfile
+    
     print("ARGS: ", args)
 
-    # Parse data configuration file
-    data_options = read_data_cfg(datacfg)
-    trainlist    = data_options['train']
-    gpus         = data_options['gpus']  
-    num_workers  = int(data_options['num_workers'])
-    backupdir    = data_options['backup']
-    im_width     = int(data_options['width'])
-    im_height    = int(data_options['height']) 
-    fx           = float(data_options['fx'])
-    fy           = float(data_options['fy'])
-    u0           = float(data_options['u0'])
-    v0           = float(data_options['v0'])
-
-    print("DATA OPTIONS: ", data_options)
-
     # Parse network and training configuration parameters
-    net_options   = parse_cfg(modelcfg)[0]
-    loss_options  = parse_cfg(modelcfg)[-1]
+    net_cfg  = parse_cfg(modelcfg)
+    net_options   = net_cfg[0]
+    loss_options  = net_cfg[-1]
     batch_size    = int(net_options['batch'])
     max_batches   = int(net_options['max_batches'])
     max_epochs    = int(net_options['max_epochs'])
@@ -198,24 +178,17 @@ def run():
     
     logger.info("Loading data")
 
-    # valid_dataset = dataset_multi.listDataset("../LINEMOD/duck/test_occlusion.txt", shape=(init_width, init_height),
-    #                                             shuffle=False,
-    #                                             objclass="duck",
-    #                                             transform=transforms.Compose([
-    #                                                 transforms.ToTensor(),
-    #                                             ]))
+    ds = dataset.listDataset(args.experiment, "train", 
+                        shape=(init_width, init_height),
+                        shuffle=False,
+                        transform=transforms.Compose([transforms.ToTensor(),]),
+                        train=False,
+                        seen=0,
+                        batch_size=batch_size,
+                        num_workers=num_workers, 
+                        bg_file_names=bg_file_names)
 
-    # Get the dataloader for training dataset
-
-    dataloader = torch.utils.data.DataLoader(dataset.listDataset(trainlist, 
-                                                                   shape=(init_width, init_height),
-                                                            	   shuffle=False,
-                                                            	   transform=transforms.Compose([transforms.ToTensor(),]),
-                                                            	   train=True,
-                                                            	   seen=0,
-                                                            	   batch_size=batch_size,
-                                                            	   num_workers=num_workers, 
-                                                                   bg_file_names=bg_file_names),
+    dataloader = torch.utils.data.DataLoader(ds,
                                                 batch_size=batch_size, shuffle=False, **kwargs)
     
     

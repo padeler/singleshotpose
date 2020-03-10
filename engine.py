@@ -72,53 +72,155 @@ class TrainEngine(object):
 
 
     @torch.no_grad()
-    def evaluate(self, model, epoch):
+    def evaluate(self, model, test_loader, epoch):
         # n_threads = torch.get_num_threads()
         # torch.set_num_threads(1)
+        def truths_length(truths):
+            for i in range(50):
+                if truths[i][1] == 0:
+                    return i
 
+        from torch.autograd import Variable # Useful info about autograd: http://pytorch.org/docs/master/notes/autograd.html
+        from utils import get_region_boxes
+        import numpy as np
+        from utils import pnp
+        im_width = 416
+        im_height = 416
+
+        
         cpu_device = torch.device("cpu")
         model.eval()
 
-        coco_evaluator.reset()
+        use_cuda = True
+        # Parameters
+        num_keypoints = 9
+        num_classes          = model.num_classes
+        anchors              = model.anchors
+        num_anchors          = model.num_anchors
+        testtime             = True
+        testing_error_trans  = 0.0
+        testing_error_angle  = 0.0
+        testing_error_pixel  = 0.0
+        testing_samples      = 0.0
+        errs_2d              = []
+        errs_3d              = []
+        errs_trans           = []
+        errs_angle           = []
+        errs_corner2D        = []
+        self.logger.info("   Testing...")
+        self.logger.info("   Number of test samples: %d" % len(test_loader.dataset))
+        notpredicted = 0
+        # Iterate through test examples 
+        for batch_idx, (data, target) in enumerate(test_loader):
+            t1 = time.time()
+            # Pass the data to GPU
+            if use_cuda:
+                data = data.cuda()
+                target = target.cuda()
+            # Wrap tensors in Variable class, set volatile=True for inference mode and to use minimal memory during inference
+            data = Variable(data, volatile=True)
+            t2 = time.time()
+            # Formward pass
+            output = model(data).data  
+            t3 = time.time()
+            # Using confidence threshold, eliminate low-confidence predictions
+            all_boxes = get_region_boxes(output, num_classes, num_keypoints)        
+            t4 = time.time()
+            # Iterate through all batch elements
+            for box_pr, target in zip([all_boxes], [target[0]]):
+                # For each image, get all the targets (for multiple object pose estimation, there might be more than 1 target per image)
+                truths = target.view(-1, num_keypoints*2+3)
+                # Get how many objects are present in the scene
+                num_gts    = truths_length(truths)
+                # Iterate through each ground-truth object
+                for k in range(num_gts):
+                    box_gt = list()
+                    for j in range(1, 2*num_keypoints+1):
+                        box_gt.append(truths[k][j])
+                    box_gt.extend([1.0, 1.0])
+                    box_gt.append(truths[k][0])
+                    
+                    # Denormalize the corner predictions 
+                    corners2D_gt = np.array(np.reshape(box_gt[:num_keypoints*2], [num_keypoints, 2]), dtype='float32')
+                    corners2D_pr = np.array(np.reshape(box_pr[:num_keypoints*2], [num_keypoints, 2]), dtype='float32')
+                    corners2D_gt[:, 0] = corners2D_gt[:, 0] * im_width
+                    corners2D_gt[:, 1] = corners2D_gt[:, 1] * im_height               
+                    corners2D_pr[:, 0] = corners2D_pr[:, 0] * im_width
+                    corners2D_pr[:, 1] = corners2D_pr[:, 1] * im_height
 
+                    # Compute corner prediction error
+                    corner_norm = np.linalg.norm(corners2D_gt - corners2D_pr, axis=1)
+                    corner_dist = np.mean(corner_norm)
+                    errs_corner2D.append(corner_dist)
 
-        i = test_loss = 0.0
-        tbar = tqdm(data_loader, desc='\r', ascii=True, dynamic_ncols=True)
+                    # Compute [R|t] by pnp
+                    R_gt, t_gt = pnp(np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32'),  corners2D_gt, np.array(internal_calibration, dtype='float32'))
+                    R_pr, t_pr = pnp(np.array(np.transpose(np.concatenate((np.zeros((3, 1)), corners3D[:3, :]), axis=1)), dtype='float32'),  corners2D_pr, np.array(internal_calibration, dtype='float32'))
+
+                    # Compute errors
+                    # Compute translation error
+                    trans_dist   = np.sqrt(np.sum(np.square(t_gt - t_pr)))
+                    errs_trans.append(trans_dist)
+
+                    # Compute angle error
+                    angle_dist   = calcAngularDistance(R_gt, R_pr)
+                    errs_angle.append(angle_dist)
+
+                    # Compute pixel error
+                    Rt_gt        = np.concatenate((R_gt, t_gt), axis=1)
+                    Rt_pr        = np.concatenate((R_pr, t_pr), axis=1)
+                    proj_2d_gt   = compute_projection(vertices, Rt_gt, internal_calibration) 
+                    proj_2d_pred = compute_projection(vertices, Rt_pr, internal_calibration) 
+                    norm         = np.linalg.norm(proj_2d_gt - proj_2d_pred, axis=0)
+                    pixel_dist   = np.mean(norm)
+                    errs_2d.append(pixel_dist)
+
+                    # Compute 3D distances
+                    transform_3d_gt   = compute_transformation(vertices, Rt_gt) 
+                    transform_3d_pred = compute_transformation(vertices, Rt_pr)  
+                    norm3d            = np.linalg.norm(transform_3d_gt - transform_3d_pred, axis=0)
+                    vertex_dist       = np.mean(norm3d)    
+                    errs_3d.append(vertex_dist)  
+
+                    # Sum errors
+                    testing_error_trans  += trans_dist
+                    testing_error_angle  += angle_dist
+                    testing_error_pixel  += pixel_dist
+                    testing_samples      += 1
+
+            t5 = time.time()
+
+        # Compute 2D projection, 6D pose and 5cm5degree scores
+        px_threshold = 5 # 5 pixel threshold for 2D reprojection error is standard in recent sota 6D object pose estimation works 
+        eps          = 1e-5
+        acc          = len(np.where(np.array(errs_2d) <= px_threshold)[0]) * 100. / (len(errs_2d)+eps)
+        acc3d        = len(np.where(np.array(errs_3d) <= vx_threshold)[0]) * 100. / (len(errs_3d)+eps)
+        acc5cm5deg   = len(np.where((np.array(errs_trans) <= 0.05) & (np.array(errs_angle) <= 5))[0]) * 100. / (len(errs_trans)+eps)
+        corner_acc   = len(np.where(np.array(errs_corner2D) <= px_threshold)[0]) * 100. / (len(errs_corner2D)+eps)
+        mean_err_2d  = np.mean(errs_2d)
+        mean_corner_err_2d = np.mean(errs_corner2D)
+        nts = float(testing_samples)
         
-        for i, (image_cpu, targets_cpu) in enumerate(tbar):
-            image = list(img.to(self.device) for img in image_cpu)
-            targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets_cpu]
+        if testtime:
+            print('-----------------------------------')
+            print('  tensor to cuda : %f' % (t2 - t1))
+            print('         predict : %f' % (t3 - t2))
+            print('get_region_boxes : %f' % (t4 - t3))
+            print('            eval : %f' % (t5 - t4))
+            print('           total : %f' % (t5 - t1))
+            print('-----------------------------------')
 
-            torch.cuda.synchronize()
-            model_time = time.time()
-            outputs = model(image)
+        # Print test statistics
+        self.logger.info("   Mean corner error is %f" % (mean_corner_err_2d))
+        self.logger.info('   Acc using {} px 2D Projection = {:.2f}%'.format(px_threshold, acc))
+        self.logger.info('   Acc using {} vx 3D Transformation = {:.2f}%'.format(vx_threshold, acc3d))
+        self.logger.info('   Acc using 5 cm 5 degree metric = {:.2f}%'.format(acc5cm5deg))
+        self.logger.info('   Translation error: %f, angle error: %f' % (testing_error_trans/(nts+eps), testing_error_angle/(nts+eps)) )
 
-            outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
-            model_time = time.time() - model_time
-
-            res = {target["image_id"].item(): output for target, output in zip(targets_cpu, outputs)}
-            evaluator_time = time.time()
-            coco_evaluator.update(res)
-            evaluator_time = time.time() - evaluator_time
-            if i == 0:
-                bgr = visualize_results(image_cpu, outputs, gt=targets_cpu, count=10, hstack=False)
-                self.saver.save_image(bgr, "val", epoch)
-                grid_image = torch.from_numpy(bgr[..., ::-1].transpose(2, 0, 1).copy())
-                self.writer.add_image('val/grid', grid_image, epoch)
-
-        # gather the stats from all processes
-        coco_evaluator.synchronize_between_processes()
-
-        # accumulate predictions from all images
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
-        # torch.set_num_threads(n_threads)
-        
-        coco_evaluator.write_result(self.writer, self.logger, epoch)
-
-        self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
-        self.logger.info('Validation [Epoch: %d, numImages: %5d] Loss: %.3f', epoch, i * data_loader.batch_size + len(image), test_loss)
-
-        bbox_ap_score = coco_evaluator.coco_eval['bbox'].stats[0]
-        return coco_evaluator, bbox_ap_score
+        # Register losses and errors for saving later on
+        # testing_iters.append(niter)
+        # testing_errors_trans.append(testing_error_trans/(nts+eps))
+        # testing_errors_angle.append(testing_error_angle/(nts+eps))
+        # testing_errors_pixel.append(testing_error_pixel/(nts+eps))
+        # testing_accuracies.append(acc)
 

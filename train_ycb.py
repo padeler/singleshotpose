@@ -34,16 +34,6 @@ def adjust_learning_rate(optimizer, epoch,  base_learning_rate, batch_size, step
     return lr
 
 
-def merge_experiment_dirs(all_data_files, key="train"):
-    res = []
-    for datafile in all_data_files:
-        data_options = read_data_cfg(datafile)
-
-        with open(data_options[key], 'r') as file:
-           trainlist = file.readlines()
-           res.extend(trainlist)
-    
-    return res
 
 def main():
 
@@ -57,15 +47,9 @@ def main():
     # set seed for repeatable results
     torch.manual_seed(args.seed)
     
-    if os.path.isdir(args.experiment): # parse experiment dir
-        import glob
-        all_data_files = glob.glob(args.experiment+os.sep+"**/*.data")
-    else:
-        all_data_files = [args.experiment,]
 
-    trainlist = merge_experiment_dirs(all_data_files, "train")
-
-    net_options   = parse_cfg(args.modelcfg)[0]
+    net_cfg = parse_cfg(args.modelcfg)
+    net_options   = net_cfg[0]
     
     batch_size    = int(net_options['batch'])
     learning_rate = float(net_options['learning_rate'])
@@ -73,6 +57,8 @@ def main():
     decay         = float(net_options['decay'])
     test_width  = int(net_options['test_width'])
     test_height = int(net_options['test_height'])
+    init_width  = int(net_options['width'])
+    init_height = int(net_options['height'])
     max_epochs    = int(net_options['max_epochs'])
     num_keypoints = int(net_options['num_keypoints'])
     steps         = [float(step) for step in net_options['steps'].split(',')]
@@ -80,7 +66,33 @@ def main():
     bg_file_names = None # get_all_files('VOCdevkit/VOC2012/JPEGImages')
 
 
-    model = Darknet(args.modelcfg)
+
+
+    # Data loading code
+    logger.info("Loading train data from %s", args.experiment)
+    trainset = dataset.listDataset(args.experiment, "train",
+                                shape=(init_width, init_height),
+                                shuffle=True,
+                                transform=transforms.Compose([transforms.ToTensor(),]),
+                                train=True,
+                                seen=0,
+                                batch_size=batch_size,
+                                num_workers=args.workers,
+                                bg_file_names=bg_file_names)
+
+    logger.info("Loading test data from %s", args.experiment)    
+    testset = dataset.listDataset(args.experiment, "valid",
+                                shape=(test_width, test_height),
+                                shuffle=False,
+                                transform=transforms.Compose([transforms.ToTensor(),]), 
+                                train=False)
+
+    num_classes = 92
+    # # update net_options for the correct number of classes
+    # net_cfg[-1]['classes'] = str(num_classes)
+    # net_cfg[-2]['filters'] = str(18 + 1 + num_classes)
+
+    model = Darknet(net_cfg)
     assert(model.num_anchors == 1)
     assert(len(model.anchors) == 0)
 
@@ -90,36 +102,27 @@ def main():
                             pretrain_num_epochs=args.pretrain_num_epochs)
     # Model settings
     
-    model.load_weights_until_last(args.weightfile) 
+    model.load_weights_until_last(args.weightfile)
     model.print_network()
     model.seen = 0
     region_loss.iter  = model.iter
     region_loss.seen  = model.seen
     init_width        = model.width
     init_height       = model.height
-    num_classes = model.num_classes
     
-    logger.info("Created model for %d classes and %d anchors. Weights init file %s", num_classes, model.num_anchors, args.weightfile)
+    
+    logger.info("Created model for %d classes and %d anchors. Weights init file %s", model.num_classes, model.num_anchors, args.weightfile)
 
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if args.cuda else {}
-
-    # Data loading code
-    logger.info("Loading train data from %s using %d images", args.experiment, len(trainlist))
-
-    trainset = dataset.listDataset(trainlist,
-                                shape=(init_width, init_height),
-                                shuffle=True,
-                                transform=transforms.Compose([transforms.ToTensor(),]),
-                                train=True,
-                                seen=model.seen,
-                                batch_size=batch_size,
-                                num_workers=args.workers,
-                                bg_file_names=bg_file_names)
 
 
     logger.info("Creating train data loader")
     # define training and validation data loaders
     data_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, worker_init_fn=worker_init_fn, **kwargs)
+
+
+    logger.info("Creating test data loader")
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, **kwargs)
 
     if args.cuda:
         device = torch.device('cuda')
@@ -153,15 +156,17 @@ def main():
         logger.info("Start training. Total Epochs: %d", max_epochs)
 
         epoch = 0
-        best_score = 0
+        is_best = False
+        best_score = epoch_score = 0
         while epoch < max_epochs:
             logger.info('[Epoch: %02d/%02d, numImages %5d, lr %.5f, best %.5f. Experiment: %s]', epoch, max_epochs, len(data_loader) * batch_size, optimizer.param_groups[0]['lr'], best_score, saver.experiment_dir)
             train_engine.train_one_epoch(model, region_loss, optimizer, data_loader, epoch)
-            adjust_learning_rate(optimizer, epoch, learning_rate, batch_size, steps, scales)
+            new_lr = adjust_learning_rate(optimizer, epoch, learning_rate, batch_size, steps, scales)
+            logger.info("LR: %0.6f", new_lr)
 
             # evaluate after every epoch
-            if epoch % 20 ==0 and epoch>0:
-                _, epoch_score = train_engine.evaluate(model, epoch=epoch)
+            if epoch%2 == 0 and epoch > 0:
+                _, epoch_score = train_engine.evaluate(model, test_loader, epoch=epoch)
                 is_best = epoch_score > best_score
                 if is_best:
                     best_score = epoch_score
