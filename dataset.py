@@ -21,6 +21,7 @@ def merge_experiment_dirs(all_data_files, key="train"):
 
         with open(data_options[key], 'r') as file:
             trainlist = file.readlines()
+            # print(key," LOADED %s images %d"%(datafile, len(trainlist)))
             res.extend(trainlist)
 
     return res
@@ -151,4 +152,5 @@ class listDataset(Dataset):
         self.seen = self.seen + self.num_workers
 
         # Return the retrieved image and its corresponding label
+        # label[0] = 0  ## XXX PPP for single class train test
         return (img, label)

@@ -67,7 +67,6 @@ def main():
 
 
 
-
     # Data loading code
     logger.info("Loading train data from %s", args.experiment)
     trainset = dataset.listDataset(args.experiment, "train",
@@ -80,14 +79,6 @@ def main():
                                 num_workers=args.workers,
                                 bg_file_names=bg_file_names)
 
-    logger.info("Loading test data from %s", args.experiment)    
-    testset = dataset.listDataset(args.experiment, "valid",
-                                shape=(test_width, test_height),
-                                shuffle=False,
-                                transform=transforms.Compose([transforms.ToTensor(),]), 
-                                train=False)
-
-    num_classes = 92
     # # update net_options for the correct number of classes
     # net_cfg[-1]['classes'] = str(num_classes)
     # net_cfg[-2]['filters'] = str(18 + 1 + num_classes)
@@ -101,8 +92,9 @@ def main():
                             anchors=model.anchors, num_anchors=model.num_anchors, 
                             pretrain_num_epochs=args.pretrain_num_epochs)
     # Model settings
-    
-    model.load_weights_until_last(args.weightfile)
+    epoch = 0
+
+
     model.print_network()
     model.seen = 0
     region_loss.iter  = model.iter
@@ -121,21 +113,28 @@ def main():
     data_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, worker_init_fn=worker_init_fn, **kwargs)
 
 
-    logger.info("Creating test data loader")
-    test_loader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, **kwargs)
 
     if args.cuda:
         device = torch.device('cuda')
     else:
         device = torch.device('cpu')
 
-    model.to(device)
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
         params, lr=learning_rate/batch_size, momentum=momentum, dampening=0, weight_decay=decay*batch_size)
 
+    if args.resume or args.validate_only:
+        logger.info("Loading model weights from %s", args.weightfile)
+        checkpoint = torch.load(args.weightfile, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
+        epoch = checkpoint.get('epoch', 0)
+    else:
+        model.load_weights_until_last(args.weightfile)
 
+    
+    model.to(device)
+    
     logger.info("Creating tensorboard writer")
     writer = create_summary(saver.experiment_dir)
 
@@ -155,32 +154,31 @@ def main():
     if not args.validate_only:
         logger.info("Start training. Total Epochs: %d", max_epochs)
 
-        epoch = 0
         is_best = False
-        best_score = epoch_score = 0
+        min_error = epoch_error = 100000000
         while epoch < max_epochs:
-            logger.info('[Epoch: %02d/%02d, numImages %5d, lr %.5f, best %.5f. Experiment: %s]', epoch, max_epochs, len(data_loader) * batch_size, optimizer.param_groups[0]['lr'], best_score, saver.experiment_dir)
-            train_engine.train_one_epoch(model, region_loss, optimizer, data_loader, epoch)
             new_lr = adjust_learning_rate(optimizer, epoch, learning_rate, batch_size, steps, scales)
-            logger.info("LR: %0.6f", new_lr)
+            logger.info('[Epoch: %02d/%02d, numImages %5d, lr %f, best %.5f. Experiment: %s]', epoch, max_epochs, len(data_loader) * batch_size, new_lr, min_error, saver.experiment_dir)
+            train_engine.train_one_epoch(model, region_loss, optimizer, data_loader, epoch)
 
             # evaluate after every epoch
-            if epoch%2 == 0 and epoch > 0:
-                _, epoch_score = train_engine.evaluate(model, test_loader, epoch=epoch)
-                is_best = epoch_score > best_score
+            if epoch%10 == 0 and epoch > args.pretrain_num_epochs:
+                epoch_error = train_engine.evaluate(model)
+                is_best = epoch_error < min_error
+                logger.info("Evaluation score %0.4f, is_best=%d", epoch_error, is_best)
                 if is_best:
-                    best_score = epoch_score
+                    min_error = epoch_error
 
             saver.save_checkpoint({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'score': epoch_score,
+                'score': epoch_error,
                 'args': args,
                 'epoch': epoch,}, is_best)
             epoch += 1
     else:
         logger.info("Start evaluation.")
-        _, score = train_engine.evaluate(model, epoch=0)
+        score = train_engine.evaluate(model)
         logger.info("Evaluation completed. Score: %f", score)
 
 

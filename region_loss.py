@@ -21,16 +21,16 @@ def build_targets(pred_corners, target, num_keypoints, anchors, num_anchors, num
     tys = list()
     for i in range(num_keypoints):
         txs.append(torch.zeros(nB, nA, nH, nW))
-        tys.append(torch.zeros(nB, nA, nH, nW)) 
+        tys.append(torch.zeros(nB, nA, nH, nW))
     tconf       = torch.zeros(nB, nA, nH, nW)
-    tcls        = torch.zeros(nB, nA, nH, nW) 
+    tcls        = torch.zeros(nB, nA, nH, nW)
 
     num_labels = 2 * num_keypoints + 3 # +2 for width, height and +1 for class within label files
     nAnchors = nA*nH*nW
     nPixels  = nH*nW
     for b in range(nB):
         cur_pred_corners = pred_corners[b*nAnchors:(b+1)*nAnchors].t()
-        cur_confs = torch.zeros(nAnchors)
+        cur_confs = torch.zeros(nA, nH, nW)
         for t in range(50):
             if target[b][t*num_labels+1] == 0:
                 break
@@ -176,15 +176,21 @@ class RegionLoss(nn.Module):
         # print("TCLS: ", tcls)
         # print("CCLS: ", cls)
         loss_cls  = self.class_scale * nn.CrossEntropyLoss(size_average=False)(cls, tcls)
+        loss_dict = {}
+        loss_dict['x'] = loss_x
+        loss_dict['y'] = loss_y
+        loss_dict['cls'] = loss_cls
+        loss_dict['conf'] = loss_conf
 
-        if epoch > self.pretrain_num_epochs:
-            loss  = loss_x + loss_y + loss_cls + loss_conf # in single object pose estimation, there is no classification loss
-        else:
-            # pretrain initially without confidence loss
-            # once the coordinate predictions get better, start training for confidence as well
-            loss  = loss_x + loss_y + loss_cls
+        # if epoch > self.pretrain_num_epochs:
+        #     loss  = loss_x + loss_y + loss_cls + loss_conf # in single object pose estimation, there is no classification loss
+        # else:
+        #     # pretrain initially without confidence loss
+        #     # once the coordinate predictions get better, start training for confidence as well
+        #     loss  = loss_x + loss_y + loss_cls
     
-        # print('%d: nGT %d, recall %d, proposals %d, loss: x %f, y %f, conf %f, cls %f, total %f' % (self.seen, nGT, nCorrect, nProposals, loss_x.item(), loss_y.item(), loss_conf.item(), loss_cls.item(), loss.item()))
+        # if self.seen%10 == 0:
+        #     print('%d: nGT %d, recall %d, proposals %d, loss: x %f, y %f, conf %f, cls %f, total %f' % (self.seen, nGT, nCorrect, nProposals, loss_x.item(), loss_y.item(), loss_conf.item(), loss_cls.item(), loss.item()))
         t4 = time.time()
 
         if False:
@@ -195,4 +201,4 @@ class RegionLoss(nn.Module):
             print('         create loss : %f' % (t4 - t3))
             print('               total : %f' % (t4 - t0))
 
-        return loss
+        return loss_dict

@@ -55,11 +55,11 @@ box_lines = [
 
 def _draw(overlay, anno, thickness=1, palette=LABELS_256, show_bbox=True, line_pairs=None):
     corners = anno[0, 1:-2].reshape(-1, 2) # XXX For single object annotation per image
-
     
-    corners = (corners * overlay.shape[0]).astype(np.int32)
-
+    
     # scale to img size
+    corners = (corners * overlay.shape[0]).astype(np.int32)
+    cls_id = anno[0, 0]
          
     for idx, c in enumerate(corners):
         c = tuple(c)
@@ -68,7 +68,9 @@ def _draw(overlay, anno, thickness=1, palette=LABELS_256, show_bbox=True, line_p
             
         cv2.circle(overlay, tuple(c), 1, clr, thickness)
         cv2.putText(overlay, "%d"%idx, (c[0]+5, c[1]+20), 0, 0.5, clr, thickness)
-            
+    
+    cv2.putText(overlay, "%d"%cls_id, (c[0]-15, c[1]-20), 0, 1, clr, 2)
+
     if line_pairs is not None:
         for pair in line_pairs:
             p1 = list(corners[1:][pair[0]])
@@ -154,9 +156,11 @@ def run():
     print("LOSS OPTIONS: ", loss_options)
 
     # Specifiy the model and the loss
-    if False:
-        model       = Darknet(modelcfg)
-        model.load_weights(initweightfile) 
+    if True:
+        model       = Darknet(net_cfg)
+        logger.info("Loading model weights from %s", initweightfile)
+        checkpoint = torch.load(args.weightfile, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
         model.print_network()
         model.cuda()
         model.eval()
@@ -164,8 +168,8 @@ def run():
         model = None
     # model.seen        = 0
     # processed_batches = model.seen/batch_size
-    init_width        = 416 # model.width
-    init_height       = 416 # model.height
+    init_width        = model.width
+    init_height       = model.height
     batch_size = 1
     num_workers = 0
 
@@ -178,7 +182,7 @@ def run():
     
     logger.info("Loading data")
 
-    ds = dataset.listDataset(args.experiment, "train", 
+    ds = dataset.listDataset(args.experiment, "valid", 
                         shape=(init_width, init_height),
                         shuffle=False,
                         transform=transforms.Compose([transforms.ToTensor(),]),
@@ -188,8 +192,7 @@ def run():
                         num_workers=num_workers, 
                         bg_file_names=bg_file_names)
 
-    dataloader = torch.utils.data.DataLoader(ds,
-                                                batch_size=batch_size, shuffle=False, **kwargs)
+    dataloader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False, **kwargs)
     
     
     delay = {True: 0, False: 1}
@@ -221,7 +224,7 @@ def run():
         else:
             pred = None
 
-        viz = visualize_results(images, t, pred, img_size=416, show_3d=True)
+        viz = visualize_results(images, t, pred, img_size=640, show_3d=True)
 
         cv2.imshow("Res ", viz)
 

@@ -11,6 +11,7 @@ import dataset
 from darknet import Darknet
 from utils import *
 from MeshPly import MeshPly
+from cfg import parse_cfg
 
 def valid(datacfg, modelcfg, weightfile):
     def truths_length(truths, max_num_gt=50):
@@ -40,7 +41,6 @@ def valid(datacfg, modelcfg, weightfile):
     torch.cuda.manual_seed(seed)
     save            = False
     testtime        = True
-    num_classes     = 1
     testing_samples = 0.0
     if save:
         makedirs(backupdir + '/test')
@@ -80,7 +80,8 @@ def valid(datacfg, modelcfg, weightfile):
         valid_files = [item.rstrip() for item in tmp_files]
     
     # Specicy model, load pretrained weights, pass to GPU and set the module in evaluation mode
-    model = Darknet(modelcfg)
+    net_cfg = parse_cfg(args.modelcfg)
+    model = Darknet(net_cfg)
     model.print_network()
     model.load_weights(weightfile)
     model.cuda()
@@ -89,9 +90,10 @@ def valid(datacfg, modelcfg, weightfile):
     test_height   = model.test_height
     num_keypoints = model.num_keypoints 
     num_labels    = num_keypoints * 2 + 3 # +2 for width, height,  +1 for class label
+    num_classes     = model.num_classes
 
     # Get the parser for the test dataset
-    valid_dataset = dataset.listDataset(valid_images, 
+    valid_dataset = dataset.listDataset(datacfg, image_set="valid", 
                                         shape=(test_width, test_height),
                                         shuffle=False,
                                         transform=transforms.Compose([transforms.ToTensor(),]))

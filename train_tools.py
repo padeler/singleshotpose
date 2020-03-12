@@ -27,6 +27,9 @@ def parse_args():
     parser.add_argument('--validate-only', action='store_true', default=False,
                         help='Validation mode. Must be used with --weightfile to load model weights.')
 
+    parser.add_argument('--resume', action='store_true', default=False,
+                        help='Resume mode. Must be used with --weightfile to load model weights.')
+
     parser.add_argument('--checkname', type=str, default=None, help='set the checkpoint name')
     parser.add_argument('--kw', type=str, default='exp',
                         help='Keyword for the experiment name (default: %(default)s)')
