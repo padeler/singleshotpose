@@ -163,7 +163,7 @@ def main():
 
             # evaluate after every epoch
             if epoch%10 == 0 and epoch > args.pretrain_num_epochs:
-                epoch_error = train_engine.evaluate(model)
+                epoch_error = train_engine.evaluate(model, epoch)
                 is_best = epoch_error < min_error
                 logger.info("Evaluation score %0.4f, is_best=%d", epoch_error, is_best)
                 if is_best:
@@ -178,7 +178,7 @@ def main():
             epoch += 1
     else:
         logger.info("Start evaluation.")
-        score = train_engine.evaluate(model)
+        score = train_engine.evaluate(model, 0)
         logger.info("Evaluation completed. Score: %f", score)
 
 

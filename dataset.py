@@ -150,7 +150,10 @@ class listDataset(Dataset):
 
         # Increase the number of seen examples
         self.seen = self.seen + self.num_workers
+        meta = {
+            "img_path": imgpath,
+        }
 
         # Return the retrieved image and its corresponding label
         # label[0] = 0  ## XXX PPP for single class train test
-        return (img, label)
+        return (img, label, meta)

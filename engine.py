@@ -37,7 +37,7 @@ class TrainEngine(object):
         train_loss = 0.0
 
         tbar = tqdm(data_loader, ascii=True, dynamic_ncols=True)
-        for i, (images, targets) in enumerate(tbar):
+        for i, (images, targets, meta) in enumerate(tbar):
             images = images.to(self.device)
             targets = targets.to(self.device)
 
@@ -79,7 +79,7 @@ class TrainEngine(object):
         self.logger.info('Epoch %d total loss: %.3f', epoch, train_loss)
 
     @torch.no_grad()
-    def evaluate(self, model):
+    def evaluate(self, model, epoch):
         model.eval()
 
         if os.path.isdir(self.args.experiment):  # parse experiment dir
@@ -88,14 +88,27 @@ class TrainEngine(object):
             all_data_files = [self.args.experiment, ]
 
         # for each sub-experiment data file run evaluation
-        err = 0
-        for exp in all_data_files[:1]:
+        err_sum = acc_sum = 0
+        # all_data_files = all_data_files[:1]
+
+        for exp in all_data_files:
 
             self.logger.info("Testing with data from %s", exp)
-            _, exp_err = self._evaluate_one_object(exp, model)
-            err += exp_err
+            acc, exp_err = self._evaluate_one_object(exp, model)
 
-        return err/len(all_data_files)
+            n = os.path.basename(os.path.dirname(exp))
+            self.writer.add_scalar('val/%s_acc'%n, acc, epoch)
+            self.writer.add_scalar('val/%s_err'%n, exp_err, epoch)
+
+            err_sum += exp_err
+            acc_sum += acc
+
+        mean_err = err_sum/len(all_data_files)
+        mean_acc = acc_sum/len(all_data_files)
+        self.writer.add_scalar('val/acc', mean_acc, epoch)
+        self.writer.add_scalar('val/err', mean_err, epoch)
+
+        return mean_err
 
     def _evaluate_one_object(self, datacfg, model):
 
@@ -164,7 +177,8 @@ class TrainEngine(object):
 
         notpredicted = 0
         # Iterate through test examples
-        for batch_idx, (data, target) in enumerate(test_loader):
+        tbar = tqdm(test_loader, ascii=True, dynamic_ncols=True)
+        for batch_idx, (data, target, meta) in enumerate(tbar):
             t1 = time.time()
             # Pass the data to GPU
             if use_cuda:

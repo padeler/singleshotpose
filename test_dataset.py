@@ -79,7 +79,13 @@ def _draw(overlay, anno, thickness=1, palette=LABELS_256, show_bbox=True, line_p
 
 
 def process_image(image, gt=None, pred=None, img_size=256, show_3D=False):
-    im = (image * 255).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+    if type(image) is torch.Tensor:
+        im = ((image * 255).permute(1, 2, 0).cpu().numpy().astype(np.uint8))[..., ::-1]
+    elif type(image) is np.ndarray:
+        im = image
+    else:
+        raise TypeError("Unknown image type", type(image))
+
     h, w = im.shape[:2]
     big = h if h > w else w
     sc = img_size / big
@@ -88,7 +94,7 @@ def process_image(image, gt=None, pred=None, img_size=256, show_3D=False):
     nh, nw = img_sc.shape[:2]
 
     overlay = np.zeros((img_size, img_size, 3), dtype=np.uint8)
-    overlay[:nh, :nw] = img_sc[..., ::-1]
+    overlay[:nh, :nw] = img_sc
 
     line_pairs = None
     if show_3D:
@@ -202,8 +208,9 @@ def run():
     print("Batches in dataloader: ", len(dataloader))
     tbar = tqdm(dataloader, ascii=True, dynamic_ncols=True)
     for ii, s in enumerate(tbar):
-        images, targets = s
-        # print(ii, "IMAGES:" , images.shape)
+        images, targets, meta = s
+
+        print(ii, "META:" , meta)
         # print(ii, "TARGET\n", targets.shape)
         bs = images.shape[0]
         t = targets.cpu().numpy().reshape(bs, 50, -1)
@@ -224,6 +231,10 @@ def run():
         else:
             pred = None
 
+        # load images:
+        img_paths = meta['img_path']
+        images = [cv2.imread(p) for p in img_paths]
+        
         viz = visualize_results(images, t, pred, img_size=640, show_3d=True)
 
         cv2.imshow("Res ", viz)
