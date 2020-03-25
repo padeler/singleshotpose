@@ -12,16 +12,21 @@ from torch.utils.data import Dataset
 from utils import read_truths_args, read_truths, get_all_files
 import glob
 from utils import read_data_cfg
+from itertools import cycle, islice
 
-
-def merge_experiment_dirs(all_data_files, key="train"):
+def merge_experiment_dirs(all_data_files, key="train", fixed_size=None):
     res = []
     for datafile in all_data_files:
         data_options = read_data_cfg(datafile)
 
         with open(data_options[key], 'r') as file:
             trainlist = file.readlines()
-            # print(key," LOADED %s images %d"%(datafile, len(trainlist)))
+            if fixed_size is not None:
+                random.shuffle(trainlist)
+                trainlist = list(islice(cycle(trainlist), fixed_size))
+            
+            print(key," LOADED %s images %d"%(datafile, len(trainlist)))
+            
             res.extend(trainlist)
 
     return res
@@ -29,7 +34,9 @@ def merge_experiment_dirs(all_data_files, key="train"):
 
 class listDataset(Dataset):
 
-    def __init__(self, experiment, image_set="train", shape=None, shuffle=True, transform=None, target_transform=None, train=False, seen=0, batch_size=64, num_workers=4, cell_size=32, bg_file_names=None, num_keypoints=9, max_num_gt=50):
+    def __init__(self, experiment, image_set="train", shape=None, transform=None, target_transform=None, train=False, 
+                    seen=0, batch_size=64, num_workers=4, cell_size=32, 
+                    bg_file_names=None, num_keypoints=9, max_num_gt=50, fixed_size=None):
 
         if os.path.isdir(experiment): # parse experiment dir
             all_data_files = glob.glob(experiment+os.sep+"**/*.data")
@@ -39,12 +46,9 @@ class listDataset(Dataset):
 
         # each data file corresponds to one object
         self.num_classes = len(all_data_files)
-        files_list = merge_experiment_dirs(all_data_files, image_set)
+        files_list = merge_experiment_dirs(all_data_files, image_set, fixed_size)
 
         self.lines = files_list
-        # Shuffle
-        if shuffle:
-            random.shuffle(self.lines)
 
         # Initialize variables
         self.nSamples = len(self.lines)

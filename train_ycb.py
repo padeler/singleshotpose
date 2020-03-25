@@ -65,19 +65,20 @@ def main():
     scales        = [float(scale) for scale in net_options['scales'].split(',')]
     bg_file_names = None # get_all_files('VOCdevkit/VOC2012/JPEGImages')
 
-
+    args.test_width = test_width
+    args.test_height = test_height
 
     # Data loading code
     logger.info("Loading train data from %s", args.experiment)
     trainset = dataset.listDataset(args.experiment, "train",
                                 shape=(init_width, init_height),
-                                shuffle=True,
                                 transform=transforms.Compose([transforms.ToTensor(),]),
                                 train=True,
                                 seen=0,
                                 batch_size=batch_size,
                                 num_workers=args.workers,
-                                bg_file_names=bg_file_names)
+                                bg_file_names=bg_file_names,
+                                fixed_size=args.train_fixed_size)
 
     # # update net_options for the correct number of classes
     # net_cfg[-1]['classes'] = str(num_classes)

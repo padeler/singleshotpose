@@ -114,7 +114,7 @@ def visualize_results(images, gt=None, pred=None, count=5, img_size=256, hstack=
     '''
     Draw bounding boxes and labels on each image
     Scale all images to max_size (keep aspect ratio)
-    finally stack them horizontally 
+    finally stack them horizontaly 
     '''
     m = count
     if gt is None:
@@ -136,8 +136,7 @@ def run():
     args = parse_args()
 
     modelcfg            = args.modelcfg
-    initweightfile      = args.weightfile
-    
+        
     print("ARGS: ", args)
 
     # Parse network and training configuration parameters
@@ -157,14 +156,16 @@ def run():
     steps         = [float(step) for step in net_options['steps'].split(',')]
     scales        = [float(scale) for scale in net_options['scales'].split(',')]
     # anchors       = [float(anchor) for anchor in loss_options['anchors'].split(',')]
+    init_width  = int(net_options['width'])
+    init_height = int(net_options['height'])
 
     print("NET OPTIONS: ", net_options)
     print("LOSS OPTIONS: ", loss_options)
 
     # Specifiy the model and the loss
-    if True:
+    if args.weightfile is not None:
         model       = Darknet(net_cfg)
-        logger.info("Loading model weights from %s", initweightfile)
+        logger.info("Loading model weights from %s", args.weightfile)
         checkpoint = torch.load(args.weightfile, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
         model.print_network()
@@ -172,14 +173,11 @@ def run():
         model.eval()
     else:
         model = None
-    # model.seen        = 0
-    # processed_batches = model.seen/batch_size
-    init_width        = model.width
-    init_height       = model.height
+
     batch_size = 1
     num_workers = 0
 
-    # print("Size: ", init_width, init_height)
+    print("Size: ", init_width, init_height)
 
     bg_file_names = None#get_all_files('../VOCdevkit/VOC2012/JPEGImages')
     # Specify the number of workers
@@ -190,13 +188,13 @@ def run():
 
     ds = dataset.listDataset(args.experiment, "valid", 
                         shape=(init_width, init_height),
-                        shuffle=False,
                         transform=transforms.Compose([transforms.ToTensor(),]),
                         train=False,
                         seen=0,
                         batch_size=batch_size,
                         num_workers=num_workers, 
-                        bg_file_names=bg_file_names)
+                        bg_file_names=bg_file_names,
+                        fixed_size=args.valid_fixed_size)
 
     dataloader = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=False, **kwargs)
     
@@ -211,7 +209,7 @@ def run():
         images, targets, meta = s
 
         print(ii, "META:" , meta)
-        # print(ii, "TARGET\n", targets.shape)
+        print(ii, "TARGET", targets.shape, "\n", targets)
         bs = images.shape[0]
         t = targets.cpu().numpy().reshape(bs, 50, -1)
         # print("TARGET [0, 0:1] \n", t[0, :1])

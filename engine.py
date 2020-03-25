@@ -19,6 +19,7 @@ import glob
 import os
 from MeshPly import MeshPly
 
+from train_tools import worker_init_fn
 
 class TrainEngine(object):
 
@@ -137,12 +138,12 @@ class TrainEngine(object):
 
         testset = dataset.listDataset(datacfg, "valid",
                                       shape=(im_width, im_height),
-                                      shuffle=False,
                                       transform=transforms.Compose([transforms.ToTensor(), ]),
-                                      train=False)
+                                      train=False,
+                                      fixed_size=self.args.valid_fixed_size)
 
         kwargs = {'num_workers': 4, 'pin_memory': True}
-        test_loader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, **kwargs)
+        test_loader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, worker_init_fn=worker_init_fn, **kwargs)
 
         self.logger.info("Testing. Number of test samples: %d", len(test_loader.dataset))
         acc, mean_px_err = self.__eval_tekin(model, test_loader, vertices, corners3D, internal_calibration, vx_threshold)
@@ -158,8 +159,9 @@ class TrainEngine(object):
         model.eval()
         # Parameters
         num_keypoints = model.num_keypoints
-        im_width = model.width
-        im_height = model.height
+        im_width = self.args.test_width
+        im_height = self.args.test_height
+
         use_cuda = True
         num_classes = model.num_classes
         anchors = model.anchors

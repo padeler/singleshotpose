@@ -15,7 +15,7 @@ def parse_args():
 
     parser.add_argument('--experiment', type=str, default='cfg/ape.data') # data config
     parser.add_argument('--modelcfg', type=str, default='cfg/yolo-pose.cfg') # network config
-    parser.add_argument('--weightfile', type=str, default='cfg/darknet19_448.conv.23') # imagenet initialized weights
+    parser.add_argument('--weightfile', type=str, default=None) # imagenet initialized weights
     parser.add_argument('--pretrain_num_epochs', type=int, default=15) # how many epoch to pretrain
 
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -31,6 +31,10 @@ def parse_args():
                         help='Resume mode. Must be used with --weightfile to load model weights.')
 
     parser.add_argument('--checkname', type=str, default=None, help='set the checkpoint name')
+
+    parser.add_argument('--train-fixed-size', type=int, metavar='TS', default=None, help='Fix dataset images per class. The actual class image list will be shuffled, cycled and sliced to the correct size. Default is %(default)s')
+    parser.add_argument('--valid-fixed-size', type=int, metavar='VS', default=None, help='Fix dataset images per class. The actual class image list will be shuffled, cycled and sliced to the correct size. Default is %(default)s')
+
     parser.add_argument('--kw', type=str, default='exp',
                         help='Keyword for the experiment name (default: %(default)s)')
     
