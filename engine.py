@@ -21,6 +21,17 @@ from MeshPly import MeshPly
 
 from train_tools import worker_init_fn
 
+def warmup_lr_scheduler(optimizer, iters_count, warmup_iters, warmup_factor):
+
+    def f(x):
+        t = x + iters_count
+        if t >= warmup_iters:
+            return 1
+        alpha = float(t) / warmup_iters
+        return warmup_factor * (1 - alpha) + alpha
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, f)
+
 class TrainEngine(object):
 
     def __init__(self, args, device, logger, writer, saver):
@@ -37,6 +48,15 @@ class TrainEngine(object):
 
         train_loss = 0.0
 
+        lr_scheduler = None
+        warmup_iters = 1000
+        iters_count = len(data_loader) * epoch
+
+        if iters_count < warmup_iters:
+            warmup_factor = 1. / warmup_iters
+            
+            lr_scheduler = warmup_lr_scheduler(optimizer, iters_count, warmup_iters, warmup_factor)
+
         tbar = tqdm(data_loader, ascii=True, dynamic_ncols=True)
         for i, (images, targets, meta) in enumerate(tbar):
             images = images.to(self.device)
@@ -50,18 +70,21 @@ class TrainEngine(object):
             loss_dict = region_loss(output, targets, epoch)
 
             loss = loss_dict['x'] + loss_dict['y'] + loss_dict['cls']
-            if epoch > self.args.pretrain_num_epochs:
+            if epoch >= self.args.pretrain_num_epochs:
                 loss += loss_dict['conf']
 
             loss_value = loss.item()
 
             if not math.isfinite(loss_value):
-                print("Loss is {}, stopping training".format(loss_value))
+                self.logger.error("Loss is {}, stopping training".format(loss_value))
                 sys.exit(1)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
             # self.logger.info("ITER %d, Anchor %0.5f  total %0.5f ", i, loss_dict['loss_pose_reg'].item(), loss_value)
             train_loss += loss_value
@@ -71,13 +94,15 @@ class TrainEngine(object):
 
             # Show some inference results each epoch
             if i > 0 and i % self.args.log_freq == 0:
-                self.logger.info("[%d/%d] Loss %0.4f (%0.4f) x %0.4f y %0.4f cls %0.4f conf %0.4f Speed %0.3f samples/s mem %.0f",
+                self.logger.info("[%d/%d] Loss %0.4f (%0.4f) x %0.4f y %0.4f cls %0.4f conf %0.4f lr %f Speed %0.3f samples/s mem %.0f",
                                  i, num_img_tr, loss_value, train_loss/i,
                                  loss_dict['x'].item(), loss_dict['y'].item(), loss_dict['cls'].item(), loss_dict['conf'].item(),
+                                 optimizer.param_groups[0]['lr'],
                                  (i*data_loader.batch_size)/(time.time()-st), (torch.cuda.max_memory_allocated() / 1024**2))
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
         self.logger.info('Epoch %d total loss: %.3f', epoch, train_loss)
+        return train_loss
 
     @torch.no_grad()
     def evaluate(self, model, epoch):

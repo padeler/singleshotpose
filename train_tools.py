@@ -16,12 +16,12 @@ def parse_args():
     parser.add_argument('--experiment', type=str, default='cfg/ape.data') # data config
     parser.add_argument('--modelcfg', type=str, default='cfg/yolo-pose.cfg') # network config
     parser.add_argument('--weightfile', type=str, default=None) # imagenet initialized weights
-    parser.add_argument('--pretrain_num_epochs', type=int, default=15) # how many epoch to pretrain
+    parser.add_argument('--pretrain_num_epochs', type=int, default=0) # how many epoch to pretrain
 
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: %(default)d)')
 
-    parser.add_argument('--log-freq', default=25, type=int, help='log frequency during training (default %(default)d)')
+    parser.add_argument('--log-freq', default=100, type=int, help='log frequency during training (default %(default)d)')
     parser.add_argument('--output-dir', default='run', help='path where to save')
 
     parser.add_argument('--validate-only', action='store_true', default=False,

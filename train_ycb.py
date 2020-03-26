@@ -18,35 +18,20 @@ from cfg import parse_cfg
 from utils import read_data_cfg
 from darknet import Darknet
 from region_loss import RegionLoss
-
-def adjust_learning_rate(optimizer, epoch,  base_learning_rate, batch_size, steps, scales):
-    lr = base_learning_rate
-    for i in range(len(steps)):
-        scale = scales[i]
-        if epoch >= steps[i]:
-            lr = lr * scale
-        else:
-            break
-    
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr/batch_size
-    
-    return lr
-
-
+import sys 
 
 def main():
 
     args = parse_args()
+
+    # set seed for repeatable results
+    torch.manual_seed(args.seed)
+    
     # Define Saver
     saver = Saver(args)
     saver.save_experiment_config()
 
     logger = create_logger(saver.experiment_dir, args.validate_only)
-
-    # set seed for repeatable results
-    torch.manual_seed(args.seed)
-    
 
     net_cfg = parse_cfg(args.modelcfg)
     net_options   = net_cfg[0]
@@ -61,7 +46,7 @@ def main():
     init_height = int(net_options['height'])
     max_epochs    = int(net_options['max_epochs'])
     num_keypoints = int(net_options['num_keypoints'])
-    steps         = [float(step) for step in net_options['steps'].split(',')]
+    steps         = [int(step) for step in net_options['steps'].split(',')]
     scales        = [float(scale) for scale in net_options['scales'].split(',')]
     bg_file_names = None # get_all_files('VOCdevkit/VOC2012/JPEGImages')
 
@@ -123,12 +108,17 @@ def main():
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
-        params, lr=learning_rate/batch_size, momentum=momentum, dampening=0, weight_decay=decay*batch_size)
+        params, lr=learning_rate, momentum=momentum, weight_decay=decay)
+    
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=steps, gamma=0.1)
+
 
     if args.resume or args.validate_only:
         logger.info("Loading model weights from %s", args.weightfile)
         checkpoint = torch.load(args.weightfile, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         epoch = checkpoint.get('epoch', 0)
     else:
         model.load_weights_until_last(args.weightfile)
@@ -156,14 +146,16 @@ def main():
         logger.info("Start training. Total Epochs: %d", max_epochs)
 
         is_best = False
+
         min_error = epoch_error = 100000000
         while epoch < max_epochs:
-            new_lr = adjust_learning_rate(optimizer, epoch, learning_rate, batch_size, steps, scales)
-            logger.info('[Epoch: %02d/%02d, numImages %5d, lr %f, best %.5f. Experiment: %s]', epoch, max_epochs, len(data_loader) * batch_size, new_lr, min_error, saver.experiment_dir)
+            logger.info('[Epoch: %02d/%02d, numImages %5d, lr %f, best %.5f. Experiment: %s]', epoch, max_epochs, len(data_loader) * batch_size, optimizer.param_groups[0]['lr'], min_error, saver.experiment_dir)
             train_engine.train_one_epoch(model, region_loss, optimizer, data_loader, epoch)
+            lr_scheduler.step()
 
-            # evaluate after every epoch
-            if epoch%10 == 0 and epoch > args.pretrain_num_epochs:
+
+            # evaluate (not on every epoch to save training time)
+            if (epoch % 9 == 0 or epoch > max_epochs-10) and epoch >= args.pretrain_num_epochs:
                 epoch_error = train_engine.evaluate(model, epoch)
                 is_best = epoch_error < min_error
                 logger.info("Evaluation score %0.4f, is_best=%d", epoch_error, is_best)
@@ -173,6 +165,7 @@ def main():
             saver.save_checkpoint({
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
                 'score': epoch_error,
                 'args': args,
                 'epoch': epoch,}, is_best)
