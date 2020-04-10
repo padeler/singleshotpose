@@ -186,7 +186,7 @@ def run():
     
     logger.info("Loading data")
 
-    ds = dataset.listDataset(args.experiment, "train", 
+    ds = dataset.listDataset(args.experiment, "valid", 
                         shape=(init_width, init_height),
                         transform=transforms.Compose([transforms.ToTensor(),]),
                         train=False,

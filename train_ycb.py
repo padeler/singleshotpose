@@ -117,9 +117,9 @@ def main():
         logger.info("Loading model weights from %s", args.weightfile)
         checkpoint = torch.load(args.weightfile, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-        epoch = checkpoint.get('epoch', 0)
+        # optimizer.load_state_dict(checkpoint['optimizer'])
+        # lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        # epoch = checkpoint.get('epoch', 0)
     else:
         model.load_weights_until_last(args.weightfile)
 

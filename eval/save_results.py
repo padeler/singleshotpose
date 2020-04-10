@@ -93,7 +93,6 @@ def run():
 
     ds = dataset.listDataset(args.experiment, "valid",
                         shape=(init_width, init_height),
-                        shuffle=False,
                         transform=transforms.Compose([transforms.ToTensor(),]),
                         train=False,
                         seen=0,
